@@ -1,0 +1,5 @@
+{
+  "serverUrl": "http://localhost:8080",
+  "deviceId": 1,
+  "deviceSecret": "paste the secret from Settings > Hub devices"
+}

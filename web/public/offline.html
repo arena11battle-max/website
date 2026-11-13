@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#050604" />
+    <title>ARENA11 — Offline</title>
+    <style>
+      html,body{margin:0;height:100%;background:#050604;color:#e8e4d4;font-family:system-ui,sans-serif}
+      main{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center}
+      h1{font:900 clamp(40px,10vw,80px)/1 Impact,system-ui,sans-serif;letter-spacing:.04em;margin:0}
+      h1 span{color:#ff4a1c}
+      p{color:#a09f88;max-width:28rem;margin:0}
+      .k{font:12px/1 ui-monospace,monospace;letter-spacing:.35em;text-transform:uppercase;color:#ff4a1c}
+      button{margin-top:8px;background:#ff4a1c;color:#fff;border:0;padding:14px 24px;font:700 14px/1 system-ui;letter-spacing:.15em;text-transform:uppercase;cursor:pointer}
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="k">Signal lost</div>
+      <h1>ARENA<span>11</span></h1>
+      <p>You are offline. Live scores and match control need a connection to the arena server. Check the Wi-Fi and try again.</p>
+      <button onclick="location.reload()">Retry</button>
+    </main>
+  </body>
+</html>

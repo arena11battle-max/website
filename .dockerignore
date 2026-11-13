@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+.env
+backups
+screenshots
+e2e
+bridge
+.git
+web/render
+web/scripts
+**/test

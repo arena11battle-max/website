@@ -1,0 +1,15 @@
+{
+  "name": "arena-bridge",
+  "private": true,
+  "type": "module",
+  "description": "Sends ESP32 scoreboard hits to the Arena dashboard, and a simulator for testing without hardware",
+  "scripts": {
+    "bridge": "node bridge.mjs",
+    "simulate": "node simulate.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "optionalDependencies": {
+    "serialport": "^13.0.0",
+    "@serialport/parser-readline": "^13.0.0"
+  }
+}
