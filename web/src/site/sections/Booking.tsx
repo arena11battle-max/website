@@ -11,6 +11,23 @@ interface FirebaseWebConfig {
   appId: string
 }
 
+interface RazorpayHandlerResponse {
+  razorpay_payment_id: string
+  razorpay_order_id: string
+  razorpay_signature: string
+}
+
+interface RazorpayInstance {
+  open: () => void
+  on: (event: string, cb: (resp: { error?: { description?: string; reason?: string } }) => void) => void
+}
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => RazorpayInstance
+  }
+}
+
 interface Customer {
   id: number
   mobile: string | null
@@ -294,17 +311,15 @@ export default function Booking() {
     }
   }
 
-  async function completeTestPayment() {
-    if (!token || !activeOrder) return
+  async function verifyPaymentWithServer(orderId: string, paymentId: string, signature: string, method?: string) {
+    if (!token) return
     setPayBusy(true)
     setBookingError('')
     try {
-      const paymentId = `pay_test_${Math.random().toString(16).slice(2, 10)}`
-      const signature = await hmacSha256Hex('arena11-test-gateway', `${activeOrder.orderId}|${paymentId}`)
       const res = await fetch('/api/customer/payments/verify', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orderId: activeOrder.orderId, paymentId, signature, method: paymentMethod }),
+        body: JSON.stringify({ orderId, paymentId, signature, method }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -319,6 +334,62 @@ export default function Booking() {
     } finally {
       setPayBusy(false)
     }
+  }
+
+  function openRazorpayCheckout() {
+    if (!token || !activeOrder) return
+    if (!window.Razorpay) {
+      setBookingError('Razorpay checkout script failed to load. Please refresh and try again.')
+      return
+    }
+    setBookingError('')
+    setPayBusy(true)
+    const rzp = new window.Razorpay({
+      key: activeOrder.keyId,
+      amount: activeOrder.amountInr * 100,
+      currency: 'INR',
+      name: 'ARENA11',
+      description: `${selectedPkg.name} (${activeOrder.reference})`,
+      order_id: activeOrder.orderId,
+      prefill: {
+        name: name.trim(),
+        email: (email || customer?.email || '').trim(),
+        contact: (customer?.mobile || mobile).trim(),
+      },
+      theme: { color: '#ff5a1f' },
+      handler: (response: RazorpayHandlerResponse) => {
+        void verifyPaymentWithServer(
+          response.razorpay_order_id,
+          response.razorpay_payment_id,
+          response.razorpay_signature,
+          'razorpay',
+        )
+      },
+      modal: {
+        ondismiss: () => {
+          setPayBusy(false)
+          setBookingError('Payment cancelled. Click Pay to try again.')
+        },
+      },
+    })
+    rzp.on('payment.failed', (resp) => {
+      setPayBusy(false)
+      const reason = resp.error?.description || 'Payment failed'
+      setBookingError(reason)
+      void fetch('/api/customer/payments/fail', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orderId: activeOrder.orderId, reason }),
+      }).catch(() => {})
+    })
+    rzp.open()
+  }
+
+  async function completeTestPayment() {
+    if (!token || !activeOrder) return
+    const paymentId = `pay_test_${Math.random().toString(16).slice(2, 10)}`
+    const signature = await hmacSha256Hex('arena11-test-gateway', `${activeOrder.orderId}|${paymentId}`)
+    await verifyPaymentWithServer(activeOrder.orderId, paymentId, signature, paymentMethod)
   }
 
   async function failTestPayment() {
@@ -425,30 +496,49 @@ export default function Booking() {
                   </div>
                   <span className="font-mono text-xs text-smoke">{activeOrder.reference}</span>
                 </div>
-                <div>
-                  <span className="label">Payment Method (Razorpay)</span>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
-                    {(['upi', 'card', 'netbanking'] as const).map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setPaymentMethod(m)}
-                        className={`choice justify-center uppercase ${paymentMethod === m ? 'is-on' : ''}`}
-                      >
-                        {m}
+                {activeOrder.mode === 'live' ? (
+                  <>
+                    <p className="text-sm text-smoke">
+                      Click below to open Razorpay Checkout and pay via UPI, Card, Netbanking, or Wallet.
+                    </p>
+                    {bookingError && <p className="text-sm text-red">{bookingError}</p>}
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" disabled={payBusy} onClick={openRazorpayCheckout} className="btn-hazard">
+                        {payBusy ? 'Opening Razorpay…' : `Pay ₹${activeOrder.amountInr} Now`}
                       </button>
-                    ))}
-                  </div>
-                </div>
-                {bookingError && <p className="text-sm text-red">{bookingError}</p>}
-                <div className="flex flex-wrap gap-3">
-                  <button type="button" disabled={payBusy} onClick={completeTestPayment} className="btn-hazard">
-                    {payBusy ? 'Processing…' : `Pay ₹${activeOrder.amountInr} (${paymentMethod.toUpperCase()})`}
-                  </button>
-                  <button type="button" disabled={payBusy} onClick={failTestPayment} className="btn-ghost text-xs text-red">
-                    Cancel / Simulate Failure
-                  </button>
-                </div>
+                      <button type="button" disabled={payBusy} onClick={failTestPayment} className="btn-ghost text-xs text-red">
+                        Cancel Booking
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <span className="label">Payment Method (Dev Test Mode)</span>
+                      <div className="mt-2 grid grid-cols-3 gap-2">
+                        {(['upi', 'card', 'netbanking'] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setPaymentMethod(m)}
+                            className={`choice justify-center uppercase ${paymentMethod === m ? 'is-on' : ''}`}
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {bookingError && <p className="text-sm text-red">{bookingError}</p>}
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" disabled={payBusy} onClick={completeTestPayment} className="btn-hazard">
+                        {payBusy ? 'Processing…' : `Pay ₹${activeOrder.amountInr} (${paymentMethod.toUpperCase()})`}
+                      </button>
+                      <button type="button" disabled={payBusy} onClick={failTestPayment} className="btn-ghost text-xs text-red">
+                        Cancel / Simulate Failure
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <form onSubmit={createBookingAndOrder} noValidate className="plate grid gap-5 p-6 sm:grid-cols-2 sm:p-8">
