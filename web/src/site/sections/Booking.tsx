@@ -19,10 +19,12 @@ interface Customer {
 }
 
 interface PackageOption {
-  id: '1v1' | '2v2' | '3v3' | '4v4'
+  id: '1v1' | '2v2'
   name: string
   players: number
   amountInr: number
+  duration: string
+  available: boolean
 }
 
 interface SlotOption {
@@ -47,10 +49,8 @@ interface CustomerBooking {
 }
 
 const PACKAGES: PackageOption[] = [
-  { id: '1v1', name: '1 vs 1 Tactical Duel', players: 2, amountInr: 400 },
-  { id: '2v2', name: '2 vs 2 Squad Skirmish', players: 4, amountInr: 800 },
-  { id: '3v3', name: '3 vs 3 Arena Clash', players: 6, amountInr: 1200 },
-  { id: '4v4', name: '4 vs 4 Full Arena', players: 8, amountInr: 1500 },
+  { id: '1v1', name: '1 vs 1 TDM Duel', players: 2, amountInr: 300, duration: '30–40 min', available: true },
+  { id: '2v2', name: '2 vs 2 TDM Squad', players: 4, amountInr: 500, duration: '30–40 min', available: false },
 ]
 
 const CUSTOMER_TOKEN_KEY = 'arena11_customer_token'
@@ -465,16 +465,23 @@ export default function Booking() {
                 </div>
 
                 <div className="sm:col-span-2">
-                  <span className="label">Booking Package</span>
+                  <span className="label">Booking Package (TDM · 30–40 min)</span>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
                     {PACKAGES.map((p) => (
                       <button
                         key={p.id}
                         type="button"
+                        disabled={!p.available}
                         onClick={() => setPkgId(p.id)}
-                        className={`choice justify-between px-4 py-3 text-left ${pkgId === p.id ? 'is-on' : ''}`}
+                        className={`choice justify-between px-4 py-3 text-left ${pkgId === p.id ? 'is-on' : ''} ${!p.available ? 'cursor-not-allowed opacity-55' : ''}`}
                       >
-                        <span>{p.name}</span>
+                        <div>
+                          <div>{p.name}</div>
+                          <div className="font-mono text-[10px] uppercase tracking-wider text-smoke">
+                            {p.players} players · {p.duration}
+                            {!p.available && ' · Launching Soon'}
+                          </div>
+                        </div>
                         <span className="digits font-mono text-hazard">₹{p.amountInr}</span>
                       </button>
                     ))}

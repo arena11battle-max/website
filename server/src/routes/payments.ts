@@ -8,10 +8,8 @@ import { sendAdminBookingEmail } from '../notify.js';
 import { makeCustomerAuth } from './customerAuth.js';
 
 export const BOOKING_PACKAGES = [
-  { id: '1v1', name: '1 vs 1 Tactical Duel', players: 2, amountInr: 400, mode: 'tdm' },
-  { id: '2v2', name: '2 vs 2 Squad Skirmish', players: 4, amountInr: 800, mode: 'tdm' },
-  { id: '3v3', name: '3 vs 3 Arena Clash', players: 6, amountInr: 1200, mode: 'domination' },
-  { id: '4v4', name: '4 vs 4 Full Arena', players: 8, amountInr: 1500, mode: 'custom' },
+  { id: '1v1', name: '1 vs 1 TDM Duel (30–40 min)', players: 2, amountInr: 300, mode: 'tdm', available: true },
+  { id: '2v2', name: '2 vs 2 TDM Squad (30–40 min)', players: 4, amountInr: 500, mode: 'tdm', available: false },
 ] as const;
 
 const SLOTS = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00'] as const;
@@ -125,10 +123,10 @@ const routes: FastifyPluginAsync = async (app) => {
   app.post('/customer/bookings', { preHandler: requireCustomer }, async (req, reply) => {
     const body = z
       .object({
-        packageId: z.enum(['1v1', '2v2', '3v3', '4v4']),
+        packageId: z.enum(['1v1', '2v2']),
         date: z.iso.date(),
         time: z.enum(SLOTS),
-        players: z.number().int().min(2).max(8).optional(),
+        players: z.number().int().min(2).max(4).optional(),
         name: z.string().trim().min(2).max(80),
         phone: z.string().trim().min(10).max(20).optional(),
         email: z.email().max(120).optional(),
@@ -140,6 +138,7 @@ const routes: FastifyPluginAsync = async (app) => {
     if (!phone) return reply.code(400).send({ error: 'Enter your mobile number (+91) for the booking' });
     if (body.date < todayIn(config.TIME_ZONE)) return reply.code(400).send({ error: 'Pick today or a future date' });
     const pkg = BOOKING_PACKAGES.find((p) => p.id === body.packageId)!;
+    if (!pkg.available) return reply.code(400).send({ error: '2 vs 2 TDM is launching soon. Only 1 vs 1 TDM (₹300) is available right now.' });
     const players = body.players ?? pkg.players;
     const reference = 'A11-' + crypto.randomBytes(3).toString('hex').toUpperCase();
     const slotKey = `${body.date}|${body.time}`;
