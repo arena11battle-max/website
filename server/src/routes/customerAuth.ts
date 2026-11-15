@@ -61,9 +61,91 @@ export function makeCustomerAuth(db: import('../db.js').Db) {
   };
 }
 
+const FIREBASE_CERTS_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+let cachedCerts: { keys: Record<string, string>; expiresAt: number } | null = null;
+
+async function getFirebasePublicCerts(): Promise<Record<string, string>> {
+  if (cachedCerts && Date.now() < cachedCerts.expiresAt) return cachedCerts.keys;
+  const res = await fetch(FIREBASE_CERTS_URL);
+  if (!res.ok) throw new Error(`Failed to fetch Firebase public keys (${res.status})`);
+  const keys = (await res.json()) as Record<string, string>;
+  const cc = res.headers.get('cache-control') ?? '';
+  const maxAgeMatch = cc.match(/max-age=(\d+)/i);
+  const maxAgeSec = maxAgeMatch ? Number(maxAgeMatch[1]) : 3600;
+  cachedCerts = { keys, expiresAt: Date.now() + maxAgeSec * 1000 };
+  return keys;
+}
+
+function getFirebaseWebConfig() {
+  const apiKey = process.env.FIREBASE_API_KEY?.trim();
+  const authDomain = process.env.FIREBASE_AUTH_DOMAIN?.trim();
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  const appId = process.env.FIREBASE_APP_ID?.trim();
+  if (!apiKey || !authDomain || !projectId || !appId) return null;
+  return { apiKey, authDomain, projectId, appId };
+}
+
 const routes: FastifyPluginAsync = async (app) => {
   const db = app.db;
   const requireCustomer = makeCustomerAuth(db);
+
+  app.get('/customer/auth/config', async () => {
+    return { firebase: getFirebaseWebConfig() };
+  });
+
+  app.post(
+    '/customer/auth/firebase-verify',
+    { config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } },
+    async (req, reply) => {
+      const fb = getFirebaseWebConfig();
+      if (!fb) return reply.code(503).send({ error: 'Firebase Phone Auth is not configured on the server' });
+      const { idToken, name, email } = z
+        .object({
+          idToken: z.string().min(20),
+          name: z.string().trim().min(2).max(80).optional(),
+          email: z.email().max(120).optional(),
+        })
+        .parse(req.body);
+
+      const decodedHeader = jwt.decode(idToken, { complete: true });
+      const kid = decodedHeader && typeof decodedHeader === 'object' ? decodedHeader.header?.kid : undefined;
+      if (!kid) return reply.code(401).send({ error: 'Invalid Firebase token header' });
+
+      const certs = await getFirebasePublicCerts();
+      const cert = certs[kid];
+      if (!cert) return reply.code(401).send({ error: 'Unrecognized Firebase signing key' });
+
+      let payload: jwt.JwtPayload & { phone_number?: unknown };
+      try {
+        payload = jwt.verify(idToken, cert, {
+          algorithms: ['RS256'],
+          audience: fb.projectId,
+          issuer: `https://securetoken.google.com/${fb.projectId}`,
+        }) as jwt.JwtPayload & { phone_number?: unknown };
+      } catch {
+        return reply.code(401).send({ error: 'Expired or invalid Firebase Phone Auth token' });
+      }
+
+      if (!payload.sub || typeof payload.phone_number !== 'string') {
+        return reply.code(401).send({ error: 'Verified phone number missing from Firebase token' });
+      }
+      const mobile = normalizeIndianMobile(payload.phone_number) ?? payload.phone_number;
+
+      const { rows: upserted } = await db.query<CustomerUser>(
+        `INSERT INTO customers (mobile, name, email, verified_at)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (mobile) DO UPDATE SET
+           name = COALESCE(NULLIF(EXCLUDED.name, ''), customers.name),
+           email = COALESCE(NULLIF(EXCLUDED.email, ''), customers.email),
+           verified_at = COALESCE(customers.verified_at, now())
+         RETURNING id, mobile, name, email`,
+        [mobile, name ?? null, email ?? null],
+      );
+      const customer = upserted[0];
+      const token = signCustomerToken(customer.id, customer.mobile);
+      return { token, customer };
+    },
+  );
 
   app.post(
     '/customer/auth/send-otp',

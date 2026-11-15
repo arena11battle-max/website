@@ -1,6 +1,23 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { getApps, initializeApp } from 'firebase/app'
+import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSiteSettings } from '../settings'
 import { SplitWords } from '../SplitWords'
+
+interface FirebaseWebConfig {
+  apiKey: string
+  authDomain: string
+  projectId: string
+  appId: string
+}
+
+function normalizeIndianE164(raw: string): string | null {
+  const digits = raw.replace(/[\s\-()]/g, '').replace(/^\+/, '')
+  if (/^[6-9]\d{9}$/.test(digits)) return `+91${digits}`
+  if (/^0[6-9]\d{9}$/.test(digits)) return `+91${digits.slice(1)}`
+  if (/^91[6-9]\d{9}$/.test(digits)) return `+91${digits.slice(2)}`
+  return null
+}
 
 interface Customer {
   id: number
@@ -75,6 +92,9 @@ export default function Booking() {
   const [myBookings, setMyBookings] = useState<CustomerBooking[]>([])
 
   // OTP Login state
+  const [firebaseCfg, setFirebaseCfg] = useState<FirebaseWebConfig | null>(null)
+  const confirmationRef = useRef<ConfirmationResult | null>(null)
+  const recaptchaRef = useRef<RecaptchaVerifier | null>(null)
   const [mobile, setMobile] = useState('')
   const [otpSent, setOtpSent] = useState(false)
   const [otp, setOtp] = useState('')
@@ -82,6 +102,13 @@ export default function Booking() {
   const [cooldown, setCooldown] = useState(0)
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
+
+  useEffect(() => {
+    fetch('/api/customer/auth/config')
+      .then((r) => (r.ok ? r.json() : { firebase: null }))
+      .then((d) => setFirebaseCfg(d.firebase ?? null))
+      .catch(() => {})
+  }, [])
 
   // Booking state
   const [pkgId, setPkgId] = useState<PackageOption['id']>('1v1')
@@ -159,6 +186,24 @@ export default function Booking() {
     setAuthBusy(true)
     setAuthError('')
     try {
+      if (firebaseCfg) {
+        const e164 = normalizeIndianE164(mobile)
+        if (!e164) {
+          setAuthError('Enter a valid 10-digit Indian mobile number (+91)')
+          return
+        }
+        const app = getApps()[0] ?? initializeApp(firebaseCfg)
+        const auth = getAuth(app)
+        if (!recaptchaRef.current) {
+          recaptchaRef.current = new RecaptchaVerifier(auth, 'firebase-recaptcha-container', { size: 'invisible' })
+        }
+        const result = await signInWithPhoneNumber(auth, e164, recaptchaRef.current)
+        confirmationRef.current = result
+        setOtpSent(true)
+        setCooldown(30)
+        setDevOtpHint(null)
+        return
+      }
       const res = await fetch('/api/customer/auth/send-otp', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -173,8 +218,13 @@ export default function Booking() {
       setOtpSent(true)
       setCooldown(data.cooldownSeconds ?? 30)
       setDevOtpHint(data.devOtp ?? null)
-    } catch {
-      setAuthError('Network error while sending OTP.')
+    } catch (err) {
+      if (recaptchaRef.current) {
+        recaptchaRef.current.clear()
+        recaptchaRef.current = null
+      }
+      const msg = err instanceof Error ? err.message : ''
+      setAuthError(msg || 'Could not send OTP. Please try again.')
     } finally {
       setAuthBusy(false)
     }
@@ -185,11 +235,22 @@ export default function Booking() {
     setAuthBusy(true)
     setAuthError('')
     try {
-      const res = await fetch('/api/customer/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mobile, otp }),
-      })
+      let res: Response
+      if (firebaseCfg && confirmationRef.current) {
+        const cred = await confirmationRef.current.confirm(otp)
+        const idToken = await cred.user.getIdToken()
+        res = await fetch('/api/customer/auth/firebase-verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ idToken }),
+        })
+      } else {
+        res = await fetch('/api/customer/auth/verify-otp', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mobile, otp }),
+        })
+      }
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setAuthError(data.error || 'OTP verification failed')
@@ -201,8 +262,9 @@ export default function Booking() {
       setOtp('')
       setOtpSent(false)
       setDevOtpHint(null)
+      confirmationRef.current = null
     } catch {
-      setAuthError('Network error while verifying OTP.')
+      setAuthError('Invalid or expired OTP. Please try again.')
     } finally {
       setAuthBusy(false)
     }
@@ -362,6 +424,7 @@ export default function Booking() {
               <div className="plate p-6 sm:p-8">
                 <p className="font-mono text-xs uppercase tracking-[0.25em] text-hazard">Step 1 // Mobile OTP Login</p>
                 <h3 className="mt-2 font-display text-2xl uppercase text-bone">Verify Your Mobile Number</h3>
+                <div id="firebase-recaptcha-container" />
 
                 {!otpSent ? (
                   <form onSubmit={sendOtp} className="mt-6 space-y-4">
