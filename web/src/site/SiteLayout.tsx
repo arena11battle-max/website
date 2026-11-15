@@ -13,7 +13,6 @@ export const NAV = [
   { href: '/#live', label: 'Live' },
   { href: '/#leaderboard', label: 'Leaderboard' },
   { href: '/#gallery', label: 'Gallery' },
-  { href: '/#aloha', label: 'ALOHA 2026' },
 ]
 
 export function SoundToggle({ className = '' }: { className?: string }) {

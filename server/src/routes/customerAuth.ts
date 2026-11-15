@@ -94,14 +94,32 @@ const routes: FastifyPluginAsync = async (app) => {
         [mobile, otpHash, config.OTP_EXPIRY_SECONDS],
       );
 
-      req.log.info({ mobile, otp: config.NODE_ENV === 'production' ? '[redacted]' : otp }, 'customer OTP issued');
+      const fast2smsKey = process.env.FAST2SMS_API_KEY?.trim();
+      let smsSent = false;
+      if (fast2smsKey) {
+        try {
+          const digits10 = mobile.replace(/^\+91/, '');
+          const smsRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+            method: 'POST',
+            headers: { authorization: fast2smsKey, 'content-type': 'application/json' },
+            body: JSON.stringify({ route: 'otp', variables_values: otp, numbers: digits10 }),
+          });
+          smsSent = smsRes.ok;
+          if (!smsRes.ok) req.log.warn({ status: smsRes.status }, 'Fast2SMS OTP send failed');
+        } catch (err) {
+          req.log.warn({ err }, 'Fast2SMS OTP request error');
+        }
+      }
+
+      req.log.info({ mobile, smsSent, otp: smsSent ? '[sent]' : otp }, 'customer OTP issued');
 
       return {
         ok: true,
         mobile,
+        smsConfigured: Boolean(fast2smsKey),
         expiresInSeconds: config.OTP_EXPIRY_SECONDS,
         cooldownSeconds: config.OTP_RESEND_COOLDOWN_SECONDS,
-        ...(config.NODE_ENV !== 'production' ? { devOtp: otp } : {}),
+        ...(!smsSent ? { devOtp: otp } : {}),
       };
     },
   );

@@ -7,7 +7,6 @@ import ArenaWalkthrough from './sections/ArenaWalkthrough'
 import Arsenal from './sections/Arsenal'
 import Booking from './sections/Booking'
 import Briefing from './sections/Briefing'
-import EventRegistration from './sections/EventRegistration'
 import Gallery from './sections/Gallery'
 import Hero from './sections/Hero'
 import HowItWorks from './sections/HowItWorks'
@@ -83,7 +82,6 @@ export default function Home() {
       <LiveIntel />
       <LeaderboardSection />
       <Gallery />
-      <EventRegistration />
       <Booking />
       <FinalCall />
     </div>
