@@ -273,11 +273,22 @@ export async function recordEvent(db: Db, matchId: number, input: EventInput, op
     const victim = mps.find((p) => p.id === input.victimMpId);
     if (!victim) return { accepted: false, reason: 'unknown_victim' };
     let shooter = null as (typeof mps)[number] | null;
-    // A vest whose gun sends no player ID still reports real hits: those are kept without a shooter.
+    // A vest whose gun sends no player ID still reports real hits: in a 1v1 (single opponent),
+    // attribute the hit to that sole opponent while keeping zone-based vest damage/gunName.
     const vest = input.source === 'vest';
+    let unattributedVest = false;
     if (input.type !== 'respawn') {
       shooter = mps.find((p) => p.id === input.shooterMpId) ?? null;
-      if (!shooter && !(vest && input.shooterMpId == null)) return { accepted: false, reason: 'unknown_shooter' };
+      if (!shooter && vest && input.shooterMpId == null) {
+        unattributedVest = true;
+        const { rows: opp } = await c.query<{ id: number; team: Team; gun: number }>(
+          `SELECT mp.id, mp.team, k.gun FROM match_players mp JOIN kits k ON k.id = mp.kit_id
+            WHERE mp.match_id = $1 AND mp.team <> $2`,
+          [matchId, victim.team],
+        );
+        if (opp.length === 1) shooter = opp[0];
+      }
+      if (!shooter && !unattributedVest) return { accepted: false, reason: 'unknown_shooter' };
       if (shooter && shooter.team === victim.team) return { accepted: false, reason: 'friendly_fire' };
     }
 
@@ -297,9 +308,9 @@ export async function recordEvent(db: Db, matchId: number, input: EventInput, op
     let hpAfter = MAX_HP;
     // The server is the authority on damage: device hits score the weapon configured on the shooter's kit,
     // whatever gun type or health the hardware reports. Only staff can enter a custom gun or damage.
-    const gun = manual ? (input.gun ?? shooter?.gun ?? null) : (shooter?.gun ?? null);
+    const gun = manual ? (input.gun ?? shooter?.gun ?? null) : unattributedVest ? null : (shooter?.gun ?? null);
     const zoneDamage = input.zone === 'head' ? VEST_DAMAGE.head : VEST_DAMAGE.body;
-    const gunDamage = (manual ? input.damage : null) ?? (vest && !shooter ? zoneDamage : null) ?? GUNS[gun ?? 1]?.damage ?? 25;
+    const gunDamage = (manual ? input.damage : null) ?? (unattributedVest ? zoneDamage : null) ?? GUNS[gun ?? 1]?.damage ?? 25;
 
     if (type === 'respawn') {
       hpAfter = MAX_HP;

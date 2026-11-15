@@ -76,10 +76,16 @@ const routes: FastifyPluginAsync = async (app) => {
               m.current_round AS "currentRound", m.winner, m.created_at AS "createdAt", m.started_at AS "startedAt",
               m.finished_at AS "finishedAt",
               count(mp.id)::int AS players,
-              (SELECT count(*)::int FROM events e JOIN match_players s ON s.id = e.shooter_mp_id
-                WHERE e.match_id = m.id AND e.type = 'kill' AND s.team = 'red' AND NOT e.voided) AS "redScore",
-              (SELECT count(*)::int FROM events e JOIN match_players s ON s.id = e.shooter_mp_id
-                WHERE e.match_id = m.id AND e.type = 'kill' AND s.team = 'blue' AND NOT e.voided) AS "blueScore"
+              (SELECT count(*)::int FROM events e
+                 LEFT JOIN match_players s ON s.id = e.shooter_mp_id
+                 LEFT JOIN match_players v ON v.id = e.victim_mp_id
+                WHERE e.match_id = m.id AND e.type = 'kill' AND NOT e.voided
+                  AND (s.team = 'red' OR (e.shooter_mp_id IS NULL AND v.team = 'blue'))) AS "redScore",
+              (SELECT count(*)::int FROM events e
+                 LEFT JOIN match_players s ON s.id = e.shooter_mp_id
+                 LEFT JOIN match_players v ON v.id = e.victim_mp_id
+                WHERE e.match_id = m.id AND e.type = 'kill' AND NOT e.voided
+                  AND (s.team = 'blue' OR (e.shooter_mp_id IS NULL AND v.team = 'red'))) AS "blueScore"
          FROM matches m LEFT JOIN match_players mp ON mp.match_id = m.id
         WHERE $1::text[] IS NULL OR m.status = ANY($1)
         GROUP BY m.id ORDER BY m.id DESC LIMIT $2`,
