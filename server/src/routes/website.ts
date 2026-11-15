@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { sendAdminBookingEmail } from '../notify.js';
 
 // Public website data (venue settings, booking enquiries, photo gallery) and the staff tools that manage it.
 
@@ -92,6 +93,17 @@ const routes: FastifyPluginAsync = async (app) => {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [reference, body.name, body.phone, body.email ?? null, body.players, body.date, body.time, body.notes ?? null, body.mode ?? null, body.loadout ?? null, ipHash],
       );
+      void sendAdminBookingEmail(`ARENA11 New Booking Enquiry: ${reference} (${body.date} ${body.time})`, [
+        `Reference: ${reference}`,
+        `Name: ${body.name}`,
+        `Phone: ${body.phone}`,
+        `Email: ${body.email ?? 'N/A'}`,
+        `Players: ${body.players}`,
+        `Slot: ${body.date} at ${body.time}`,
+        `Mode: ${body.mode ?? 'N/A'} | Loadout: ${body.loadout ?? 'N/A'}`,
+        `Notes: ${body.notes ?? 'None'}`,
+        `Manage: /command/bookings`,
+      ]).catch((err) => req.log.warn({ err }, 'enquiry email alert failed'));
       return reply.code(201).send({ reference, status: 'enquiry' });
     },
   );
