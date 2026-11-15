@@ -149,6 +149,72 @@ const routes: FastifyPluginAsync = async (app) => {
       );
       return { audit: rows };
     });
+
+    // ---- Admin Dashboard Metrics ----
+    admin.get('/dashboard', async () => {
+      const [matchesAgg, bookingsAgg, playersAgg, revToday, pendingPay, recentMatches, playerStats] = await Promise.all([
+        db.query<{ total: number; completed: number }>(
+          `SELECT count(*) FILTER (WHERE status <> 'setup')::int AS total,
+                  count(*) FILTER (WHERE status = 'finished')::int AS completed
+             FROM matches`,
+        ),
+        db.query<{ total: number }>(`SELECT count(*)::int AS total FROM bookings`),
+        db.query<{ total: number }>(`SELECT count(*)::int AS total FROM players WHERE NOT archived`),
+        db.query<{ total_inr: number }>(
+          `SELECT (
+             COALESCE((SELECT sum(amount_paise) / 100 FROM payments WHERE status = 'paid' AND (created_at AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date), 0)
+             + COALESCE((SELECT sum(final_price) FROM event_registrations WHERE (created_at AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date), 0)
+           )::int AS total_inr`,
+          [config.TIME_ZONE],
+        ),
+        db.query<{ count: number; amount_inr: number }>(
+          `SELECT count(*)::int AS count, COALESCE(sum(amount_inr), 0)::int AS amount_inr
+             FROM bookings WHERE status IN ('pending', 'new')`,
+        ),
+        db.query(
+          `SELECT m.id, m.name, m.status, m.winner, m.rounds, m.round_seconds AS "roundSeconds",
+                  m.started_at AS "startedAt", m.finished_at AS "finishedAt",
+                  (SELECT count(*)::int FROM events e JOIN match_players s ON s.id = e.shooter_mp_id
+                    WHERE e.match_id = m.id AND e.type = 'kill' AND s.team = 'red' AND NOT e.voided) AS "redScore",
+                  (SELECT count(*)::int FROM events e JOIN match_players s ON s.id = e.shooter_mp_id
+                    WHERE e.match_id = m.id AND e.type = 'kill' AND s.team = 'blue' AND NOT e.voided) AS "blueScore"
+             FROM matches m
+            WHERE m.status <> 'setup'
+            ORDER BY m.id DESC
+            LIMIT 10`,
+        ),
+        db.query(
+          `SELECT p.id, COALESCE(NULLIF(p.nickname, ''), p.name) AS "displayName", p.name,
+                  count(DISTINCT mp.match_id)::int AS matches,
+                  count(e.id) FILTER (WHERE e.type = 'kill' AND e.shooter_mp_id = mp.id)::int AS kills,
+                  count(e.id) FILTER (WHERE e.type = 'kill' AND e.victim_mp_id = mp.id)::int AS deaths,
+                  COALESCE(sum(e.damage) FILTER (WHERE e.shooter_mp_id = mp.id), 0)::int AS "damageDealt"
+             FROM players p
+             JOIN match_players mp ON mp.player_id = p.id
+             JOIN matches m ON m.id = mp.match_id AND m.status = 'finished'
+             LEFT JOIN events e ON e.match_id = mp.match_id AND NOT e.voided
+                               AND (e.shooter_mp_id = mp.id OR e.victim_mp_id = mp.id)
+            WHERE NOT p.archived
+            GROUP BY p.id
+            ORDER BY kills DESC, "damageDealt" DESC
+            LIMIT 15`,
+        ),
+      ]);
+
+      return {
+        totalMatchesPlayed: matchesAgg.rows[0]?.total ?? 0,
+        completedMatches: matchesAgg.rows[0]?.completed ?? 0,
+        totalBookings: bookingsAgg.rows[0]?.total ?? 0,
+        todayRevenue: revToday.rows[0]?.total_inr ?? 0,
+        pendingPayments: {
+          count: pendingPay.rows[0]?.count ?? 0,
+          amountInr: pendingPay.rows[0]?.amount_inr ?? 0,
+        },
+        totalPlayers: playersAgg.rows[0]?.total ?? 0,
+        recentMatches: recentMatches.rows,
+        playerStats: playerStats.rows,
+      };
+    });
   });
 };
 

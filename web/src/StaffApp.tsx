@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import { Spinner } from './components/ui'
 import { AuthProvider, useAuth } from './lib/auth'
 import Bookings from './pages/Bookings'
+import Dashboard from './pages/Dashboard'
 import Events from './pages/Events'
 import History from './pages/History'
 import Leaderboard from './pages/Leaderboard'
@@ -20,6 +21,7 @@ function Console() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Live />} />
+        <Route path="dashboard" element={<Dashboard />} />
         <Route path="players" element={<Players />} />
         <Route path="players/:id" element={<PlayerDetail />} />
         <Route path="matches/new" element={<NewMatch />} />

@@ -1,13 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { KillFeed, RoundTable, ScoreHeader, StatsTable, TeamRoster } from '../components/game'
 import VestPanel from '../components/VestPanel'
-import { Button, ErrorText, Modal, Panel, Select, Spinner, StatusBadge } from '../components/ui'
+import { Button, ErrorText, Field, Modal, Panel, Select, Spinner, StatusBadge } from '../components/ui'
 import { del, get, post } from '../lib/api'
 import { useArenaSounds, useCountdown, useLiveScoreboard } from '../lib/live'
-import { GUN_DAMAGE, GUN_NAMES, type Scoreboard } from '../lib/types'
+import { GUN_DAMAGE, GUN_NAMES, type Kit, type Player, type Scoreboard, type Team } from '../lib/types'
 
-type Confirm = { action: 'next' | 'end' | 'delete'; title: string; body: string } | null
+type Confirm = { action: 'next' | 'end' | 'delete' | 'reset'; title: string; body: string } | null
+
+interface HpHistoryItem {
+  id: number
+  round: number
+  scope: 'player' | 'all'
+  hpBefore: number | null
+  hpAfter: number
+  playerName: string | null
+  team: Team | null
+  resetBy: string | null
+  createdAt: string
+}
 
 export default function MatchConsole({ matchId }: { matchId: number }) {
   const navigate = useNavigate()
@@ -18,15 +30,24 @@ export default function MatchConsole({ matchId }: { matchId: number }) {
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState<Confirm>(null)
   const [manualOpen, setManualOpen] = useState(false)
+  const [nextMatchOpen, setNextMatchOpen] = useState(false)
+  const [hpHistory, setHpHistory] = useState<HpHistoryItem[]>([])
 
   useArenaSounds(sound, remaining, `${board?.timer.status}-${board?.timer.round}`)
+
+  const loadHpHistory = useCallback(() => {
+    get<{ history: HpHistoryItem[] }>(`/api/matches/${matchId}/hp-history`)
+      .then((r) => setHpHistory(r.history))
+      .catch(() => {})
+  }, [matchId])
 
   // First paint over HTTP in case the socket is slow to connect.
   useEffect(() => {
     get<Scoreboard>(`/api/matches/${matchId}`)
       .then((b) => setData((cur) => cur ?? b))
       .catch((e) => setError(e.message))
-  }, [matchId, setData])
+    loadHpHistory()
+  }, [matchId, setData, loadHpHistory])
 
   async function act(action: 'start' | 'pause' | 'resume' | 'next' | 'end') {
     setBusy(true)
@@ -75,6 +96,35 @@ export default function MatchConsole({ matchId }: { matchId: number }) {
       await del(`/api/events/${id}`)
     } catch (e) {
       setError((e as Error).message)
+    }
+  }
+
+  async function resetHp(matchPlayerId?: number) {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await post<{ scoreboard: Scoreboard }>(`/api/matches/${matchId}/reset-hp`, {
+        matchPlayerId,
+      })
+      setData(res.scoreboard)
+      loadHpHistory()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resetCurrentMatch() {
+    setBusy(true)
+    setError(null)
+    try {
+      setData(await post<Scoreboard>(`/api/matches/${matchId}/reset`))
+      setConfirm(null)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -160,39 +210,88 @@ export default function MatchConsole({ matchId }: { matchId: number }) {
         )}
         {running && (
           <>
+            <Button size="lg" variant="primary" disabled={busy} onClick={() => resetHp()}>
+              ♥ HP Reset (All)
+            </Button>
             <Button size="lg" onClick={() => setManualOpen(true)}>
               + Add hit / kill
             </Button>
             <Button
+              size="lg"
+              disabled={busy}
+              onClick={() => setConfirm({ action: 'reset', title: 'Reset match?', body: 'All recorded hits/kills in this match will be voided and the timer reset to setup.' })}
+            >
+              ↺ Reset match
+            </Button>
+            <Button
               variant="danger"
               size="lg"
-              onClick={() => setConfirm({ action: 'end', title: 'End the match now?', body: 'Scores are final and the winner is decided on kills so far.' })}
+              onClick={() => setConfirm({ action: 'end', title: 'End the match now?', body: 'Scores are final and the winner is decided on valid kills so far.' })}
             >
               ■ End match
             </Button>
           </>
         )}
+        <Button variant="go" size="lg" disabled={busy} onClick={() => setNextMatchOpen(true)}>
+          ⏭ Next Match
+        </Button>
         {s === 'finished' && (
           <Button variant="primary" size="lg" disabled={busy} onClick={rematch}>
             ↻ Rematch, same teams
           </Button>
         )}
       </div>
+      {s === 'finished' && (
+        <div className="hud hud-corner p-4 text-center">
+          <div className="label text-amber">Match Result</div>
+          {board.match.winner === null ? (
+            <div className="mt-1 font-display text-2xl uppercase text-muted">No valid scoring events — no winner</div>
+          ) : board.match.winner === 'draw' ? (
+            <div className="mt-1 font-display text-3xl uppercase text-amber">DRAW</div>
+          ) : (
+            <div className={`mt-1 font-display text-3xl uppercase ${board.match.winner === 'red' ? 'text-red glow-red' : 'text-blue glow-blue'}`}>
+              {board.match.winner} Team Wins
+            </div>
+          )}
+        </div>
+      )}
       <ErrorText error={error} />
 
       {/* Rosters and live feed: three columns on a laptop, two on a tablet, stacked on a phone. */}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_minmax(300px,380px)_1fr]">
         <Panel title={<span className="text-red">Red team</span>} accent="red">
-          <div className="p-3">
+          <div className="p-3 space-y-2">
             <TeamRoster board={board} team="red" />
+            {running && (
+              <div className="flex flex-wrap gap-1.5 border-t border-line pt-2">
+                {board.players
+                  .filter((p) => p.team === 'red')
+                  .map((p) => (
+                    <Button key={p.matchPlayerId} size="sm" disabled={busy} onClick={() => resetHp(p.matchPlayerId)}>
+                      Reset {p.displayName} HP ({p.hp})
+                    </Button>
+                  ))}
+              </div>
+            )}
           </div>
         </Panel>
         <Panel title="Kill feed" accent="amber" className="md:col-span-2 md:row-start-2 xl:col-span-1 xl:col-start-2 xl:row-start-1">
           <KillFeed feed={board.feed} onVoid={running ? voidEvent : undefined} />
         </Panel>
         <Panel title={<span className="text-blue">Blue team</span>} accent="blue">
-          <div className="p-3">
+          <div className="p-3 space-y-2">
             <TeamRoster board={board} team="blue" />
+            {running && (
+              <div className="flex flex-wrap gap-1.5 border-t border-line pt-2">
+                {board.players
+                  .filter((p) => p.team === 'blue')
+                  .map((p) => (
+                    <Button key={p.matchPlayerId} size="sm" disabled={busy} onClick={() => resetHp(p.matchPlayerId)}>
+                      Reset {p.displayName} HP ({p.hp})
+                    </Button>
+                  ))}
+              </div>
+            )}
           </div>
         </Panel>
       </div>
@@ -208,6 +307,24 @@ export default function MatchConsole({ matchId }: { matchId: number }) {
         </Panel>
       </div>
 
+      {hpHistory.length > 0 && (
+        <Panel title="HP Reset History">
+          <ul className="divide-y divide-line text-sm">
+            {hpHistory.map((h) => (
+              <li key={h.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+                <span>
+                  <span className="font-bold">{h.playerName ?? 'All players'}</span> (R{h.round}) —{' '}
+                  <span className="font-mono text-muted">{h.hpBefore ?? '?'} → {h.hpAfter} HP</span>
+                </span>
+                <span className="font-mono text-xs text-muted">
+                  by {h.resetBy ?? 'Staff'} · {new Date(h.createdAt).toLocaleTimeString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
       <Modal open={!!confirm} onClose={() => setConfirm(null)} title={confirm?.title ?? ''}>
         <p className="text-muted">{confirm?.body}</p>
         <div className="mt-6 flex justify-end gap-2">
@@ -215,7 +332,13 @@ export default function MatchConsole({ matchId }: { matchId: number }) {
           <Button
             variant="danger"
             disabled={busy}
-            onClick={() => (confirm?.action === 'delete' ? remove() : act(confirm!.action as 'next' | 'end'))}
+            onClick={() =>
+              confirm?.action === 'delete'
+                ? remove()
+                : confirm?.action === 'reset'
+                  ? resetCurrentMatch()
+                  : act(confirm!.action as 'next' | 'end')
+            }
           >
             Confirm
           </Button>
@@ -223,6 +346,7 @@ export default function MatchConsole({ matchId }: { matchId: number }) {
       </Modal>
 
       <ManualEvent open={manualOpen} onClose={() => setManualOpen(false)} board={board} />
+      <NextMatchModal open={nextMatchOpen} onClose={() => setNextMatchOpen(false)} currentBoard={board} />
     </div>
   )
 }
@@ -306,6 +430,115 @@ function ManualEvent({ open, onClose, board }: { open: boolean; onClose: () => v
         <ErrorText error={error} />
         <Button variant="primary" className="w-full" disabled={!shooter || !victim} onClick={save}>
           Record {type}
+        </Button>
+      </div>
+    </Modal>
+  )
+}
+
+function NextMatchModal({ open, onClose, currentBoard }: { open: boolean; onClose: () => void; currentBoard: Scoreboard }) {
+  const navigate = useNavigate()
+  const [players, setPlayers] = useState<Player[]>([])
+  const [kits, setKits] = useState<Kit[]>([])
+  const [redId, setRedId] = useState<number | ''>('')
+  const [blueId, setBlueId] = useState<number | ''>('')
+  const [minutes, setMinutes] = useState(Math.floor(currentBoard.timer.roundSeconds / 60))
+  const [seconds, setSeconds] = useState(currentBoard.timer.roundSeconds % 60)
+  const [rounds, setRounds] = useState(currentBoard.timer.rounds)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    Promise.all([get<{ players: Player[] }>('/api/players'), get<{ kits: Kit[] }>('/api/admin/kits')])
+      .then(([p, k]) => {
+        setPlayers(p.players)
+        setKits(k.kits.filter((x) => x.active))
+        const curRed = currentBoard.players.find((x) => x.team === 'red')
+        const curBlue = currentBoard.players.find((x) => x.team === 'blue')
+        if (curRed && !redId) setRedId(curRed.playerId)
+        if (curBlue && !blueId) setBlueId(curBlue.playerId)
+      })
+      .catch((e) => setError(e.message))
+  }, [open, currentBoard.players, redId, blueId])
+
+  async function launch() {
+    if (!redId || !blueId || redId === blueId) {
+      setError('Select two different players for Red and Blue teams.')
+      return
+    }
+    const redKit = kits.find((k) => k.team === 'red')
+    const blueKit = kits.find((k) => k.team === 'blue')
+    if (!redKit || !blueKit) {
+      setError('Missing active Red or Blue kit.')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      if (['live', 'break', 'paused'].includes(currentBoard.timer.status)) {
+        await post(`/api/matches/${currentBoard.match.id}/end`)
+      }
+      const created = await post<Scoreboard>('/api/matches', {
+        rounds,
+        roundSeconds: Math.max(10, Math.round(minutes * 60 + seconds)),
+        breakSeconds: 0,
+        players: [
+          { playerId: Number(redId), team: 'red' as Team, kitId: redKit.id },
+          { playerId: Number(blueId), team: 'blue' as Team, kitId: blueKit.id },
+        ],
+      })
+      onClose()
+      navigate(`/command/matches/${created.match.id}`)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Next Match Setup">
+      <div className="space-y-4">
+        <Select label="Red Team Player" value={redId} onChange={(e) => setRedId(e.target.value ? Number(e.target.value) : '')}>
+          <option value="">Choose Red player…</option>
+          {players.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.nickname || p.name}
+            </option>
+          ))}
+        </Select>
+        <Select label="Blue Team Player" value={blueId} onChange={(e) => setBlueId(e.target.value ? Number(e.target.value) : '')}>
+          <option value="">Choose Blue player…</option>
+          {players.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.nickname || p.name}
+            </option>
+          ))}
+        </Select>
+        <div className="grid grid-cols-3 gap-2">
+          <Field label="Minutes" type="number" min={0} max={120} value={minutes} onChange={(e) => setMinutes(Math.max(0, Number(e.target.value) || 0))} />
+          <Field label="Seconds" type="number" min={0} max={59} value={seconds} onChange={(e) => setSeconds(Math.min(59, Math.max(0, Number(e.target.value) || 0)))} />
+          <Field label="Rounds" type="number" min={1} max={10} value={rounds} onChange={(e) => setRounds(Math.min(10, Math.max(1, Number(e.target.value) || 1)))} />
+        </div>
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          {[1, 2, 3, 4, 5, 6, 10, 15].map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setMinutes(m)
+                setSeconds(0)
+              }}
+              className={`border px-2 py-0.5 font-mono ${minutes === m && seconds === 0 ? 'border-amber text-amber' : 'border-line-2 text-muted hover:text-text'}`}
+            >
+              {m}m
+            </button>
+          ))}
+        </div>
+        <ErrorText error={error} />
+        <Button variant="go" className="w-full" disabled={busy} onClick={launch}>
+          {busy ? 'Creating…' : 'Create & Open Next Match'}
         </Button>
       </div>
     </Modal>

@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { tx } from '../db.js';
-import { control, getMatch, recordEvent, scoreboard, voidEvent, GameError, type Control } from '../game.js';
+import { control, getMatch, recordEvent, resetMatch, resetMatchHp, scoreboard, voidEvent, GameError, type Control } from '../game.js';
 
 export function parseVestLine(line: string): { type: 'hit' | 'kill' | 'respawn'; from?: string; zone?: 'body' | 'head' } | null {
   const parts = line.trim().toUpperCase().split(',');
@@ -20,7 +20,7 @@ const Id = z.object({ id: z.coerce.number().int().positive() });
 const Settings = z.object({
   name: z.string().trim().max(60).optional(),
   rounds: z.number().int().min(1).max(10).default(3),
-  roundSeconds: z.number().int().min(30).max(3600).default(480),
+  roundSeconds: z.number().int().min(10).max(7200).default(480),
   breakSeconds: z.number().int().min(0).max(1800).default(120),
 });
 
@@ -154,6 +154,47 @@ const routes: FastifyPluginAsync = async (app) => {
       .parse(req.params);
     await control(db, id, action as Control);
     await app.audit(req, `match.${action}`, { id });
+    return scoreboard(db, id, gameOpts);
+  });
+
+  app.post('/matches/:id/reset-hp', async (req) => {
+    const { id } = Id.parse(req.params);
+    const body = z
+      .object({
+        matchPlayerId: z.number().int().positive().optional(),
+        reason: z.string().trim().max(200).optional(),
+      })
+      .parse(req.body ?? {});
+    const resets = await resetMatchHp(db, id, req.user!.id, {
+      matchPlayerId: body.matchPlayerId,
+      respawnSeconds: gameOpts.respawnSeconds,
+      reason: body.reason,
+    });
+    await app.audit(req, 'match.hp_reset', { matchId: id, matchPlayerId: body.matchPlayerId ?? 'all', resets });
+    return { resets, scoreboard: await scoreboard(db, id, gameOpts) };
+  });
+
+  app.get('/matches/:id/hp-history', async (req) => {
+    const { id } = Id.parse(req.params);
+    const { rows } = await db.query(
+      `SELECT h.id, h.round, h.scope, h.hp_before AS "hpBefore", h.hp_after AS "hpAfter", h.reason, h.created_at AS "createdAt",
+              COALESCE(NULLIF(p.nickname, ''), p.name) AS "playerName", mp.team, s.name AS "resetBy"
+         FROM hp_history h
+         LEFT JOIN match_players mp ON mp.id = h.match_player_id
+         LEFT JOIN players p ON p.id = mp.player_id
+         LEFT JOIN staff_users s ON s.id = h.reset_by
+        WHERE h.match_id = $1
+        ORDER BY h.id DESC
+        LIMIT 100`,
+      [id],
+    );
+    return { history: rows };
+  });
+
+  app.post('/matches/:id/reset', async (req) => {
+    const { id } = Id.parse(req.params);
+    await resetMatch(db, id);
+    await app.audit(req, 'match.reset', { id });
     return scoreboard(db, id, gameOpts);
   });
 

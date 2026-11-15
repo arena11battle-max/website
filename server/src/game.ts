@@ -93,9 +93,22 @@ async function finish(c: pg.PoolClient, id: number) {
       GROUP BY mp.team`,
     [id],
   );
-  const red = rows.find((r) => r.team === 'red')?.kills ?? 0;
-  const blue = rows.find((r) => r.team === 'blue')?.kills ?? 0;
-  const winner = red === blue ? 'draw' : red > blue ? 'red' : 'blue';
+  const { rows: openRows } = await c.query<{ team: Team; kills: number }>(
+    `SELECT CASE vp.team WHEN 'red' THEN 'blue' ELSE 'red' END AS team, count(*)::int AS kills
+       FROM events e JOIN match_players vp ON vp.id = e.victim_mp_id
+      WHERE e.match_id = $1 AND e.type = 'kill' AND NOT e.voided AND e.shooter_mp_id IS NULL
+      GROUP BY 1`,
+    [id],
+  );
+  const { rows: evCount } = await c.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM events WHERE match_id = $1 AND NOT voided AND type IN ('hit', 'kill')`,
+    [id],
+  );
+  const red = (rows.find((r) => r.team === 'red')?.kills ?? 0) + (openRows.find((r) => r.team === 'red')?.kills ?? 0);
+  const blue = (rows.find((r) => r.team === 'blue')?.kills ?? 0) + (openRows.find((r) => r.team === 'blue')?.kills ?? 0);
+  const hasScoringEvents = (evCount[0]?.n ?? 0) > 0;
+  // Do not invent a winner if the match ended with no valid scoring events.
+  const winner = !hasScoringEvents && red === 0 && blue === 0 ? null : red === blue ? 'draw' : red > blue ? 'red' : 'blue';
   await c.query(
     `UPDATE matches SET status = 'finished', winner = $2, finished_at = now(), phase_ends_at = NULL,
             paused_status = NULL, paused_remaining_ms = NULL WHERE id = $1`,
@@ -321,6 +334,66 @@ export async function voidEvent(db: Db, eventId: number) {
   );
   if (!rows[0]) throw new GameError(404, 'Event not found');
   changed(rows[0].match_id);
+}
+
+/** Reset HP to MAX_HP for one player or all players in a running match, recording every reset in hp_history. */
+export async function resetMatchHp(
+  db: Db,
+  matchId: number,
+  userId: number,
+  opts: { matchPlayerId?: number; respawnSeconds: number; reason?: string },
+) {
+  const resets = await tx(db, async (c) => {
+    const m = await lockMatch(c, matchId);
+    if (m.status === 'setup' || m.status === 'finished') {
+      throw new GameError(409, 'HP can only be reset during an active or paused match');
+    }
+    const { rows: mps } = await c.query<{ id: number }>(
+      opts.matchPlayerId
+        ? 'SELECT id FROM match_players WHERE match_id = $1 AND id = $2'
+        : 'SELECT id FROM match_players WHERE match_id = $1 ORDER BY id',
+      opts.matchPlayerId ? [matchId, opts.matchPlayerId] : [matchId],
+    );
+    if (!mps.length) throw new GameError(404, 'Player not found in this match');
+
+    const round = Math.max(1, m.current_round);
+    const out: { matchPlayerId: number; hpBefore: number; hpAfter: number }[] = [];
+    for (const mp of mps) {
+      const before = await victimState(c, matchId, round, mp.id, opts.respawnSeconds);
+      await c.query(
+        `INSERT INTO events (match_id, round, type, shooter_mp_id, victim_mp_id, gun, damage, victim_hp_after, source)
+         VALUES ($1, $2, 'respawn', NULL, $3, NULL, 0, $4, 'manual')`,
+        [matchId, round, mp.id, MAX_HP],
+      );
+      await c.query(
+        `INSERT INTO hp_history (match_id, round, match_player_id, scope, hp_before, hp_after, reset_by, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [matchId, round, mp.id, opts.matchPlayerId ? 'player' : 'all', before.hp, MAX_HP, userId, opts.reason ?? null],
+      );
+      out.push({ matchPlayerId: mp.id, hpBefore: before.hp, hpAfter: MAX_HP });
+    }
+    return out;
+  });
+  changed(matchId);
+  return resets;
+}
+
+/** Reset a match back to setup, voiding recorded events and clearing the clock so it can be restarted cleanly. */
+export async function resetMatch(db: Db, matchId: number): Promise<MatchRow> {
+  await tx(db, async (c) => {
+    await lockMatch(c, matchId);
+    await c.query('UPDATE events SET voided = true WHERE match_id = $1 AND NOT voided', [matchId]);
+    await c.query(
+      `UPDATE matches
+          SET status = 'setup', current_round = 0, phase_ends_at = NULL,
+              paused_status = NULL, paused_remaining_ms = NULL,
+              winner = NULL, started_at = NULL, finished_at = NULL
+        WHERE id = $1`,
+      [matchId],
+    );
+  });
+  changed(matchId);
+  return (await getMatch(db, matchId))!;
 }
 
 export interface PlayerLine {

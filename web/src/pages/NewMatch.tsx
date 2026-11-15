@@ -23,8 +23,9 @@ export default function NewMatch() {
   const [lineup, setLineup] = useState<Slot[]>([])
   const [name, setName] = useState('')
   const [rounds, setRounds] = useState(3)
-  const [roundMin, setRoundMin] = useState(8)
-  const [breakMin, setBreakMin] = useState(2)
+  const [roundMin, setRoundMin] = useState(5)
+  const [roundSec, setRoundSec] = useState(0)
+  const [breakMin, setBreakMin] = useState(1)
   const [q, setQ] = useState('')
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,7 +43,8 @@ export default function NewMatch() {
         .then(([b, l]) => {
           setName(b.match.name)
           setRounds(b.timer.rounds)
-          setRoundMin(b.timer.roundSeconds / 60)
+          setRoundMin(Math.floor(b.timer.roundSeconds / 60))
+          setRoundSec(b.timer.roundSeconds % 60)
           setBreakMin(b.timer.breakSeconds / 60)
           setLineup(l.players)
         })
@@ -94,7 +96,8 @@ export default function NewMatch() {
   async function save() {
     setBusy(true)
     setError(null)
-    const body = { name, rounds, roundSeconds: Math.round(roundMin * 60), breakSeconds: Math.round(breakMin * 60), players: lineup }
+    const roundSeconds = Math.max(10, Math.round(roundMin * 60 + roundSec))
+    const body = { name, rounds, roundSeconds, breakSeconds: Math.round(breakMin * 60), players: lineup }
     try {
       const res = editId ? await patch<Scoreboard>(`/api/matches/${editId}`, body) : await post<Scoreboard>('/api/matches', body)
       navigate(`/command/matches/${res.match.id}`)
@@ -110,7 +113,8 @@ export default function NewMatch() {
   const red = lineup.filter((s) => s.team === 'red')
   const blue = lineup.filter((s) => s.team === 'blue')
   const canSave = red.length > 0 && blue.length > 0 && lineup.length >= 2
-  const totalMin = rounds * roundMin + Math.max(0, rounds - 1) * breakMin
+  const roundTotalSec = Math.max(10, roundMin * 60 + roundSec)
+  const totalMin = Math.round(((rounds * roundTotalSec + Math.max(0, rounds - 1) * breakMin * 60) / 60) * 10) / 10
 
   const teamPanel = (team: Team, slots: Slot[]) => (
     <Panel
@@ -169,13 +173,24 @@ export default function NewMatch() {
               </option>
             ))}
           </Select>
-          <Select label="Round length" value={roundMin} onChange={(e) => setRoundMin(Number(e.target.value))}>
-            {[1, 3, 5, 6, 8, 10, 12, 15, 20].map((n) => (
-              <option key={n} value={n}>
-                {n} min
-              </option>
-            ))}
-          </Select>
+          <div className="grid grid-cols-2 gap-2">
+            <Field
+              label="Round minutes"
+              type="number"
+              min={0}
+              max={120}
+              value={roundMin}
+              onChange={(e) => setRoundMin(Math.max(0, Math.min(120, Math.floor(Number(e.target.value) || 0))))}
+            />
+            <Field
+              label="Seconds"
+              type="number"
+              min={0}
+              max={59}
+              value={roundSec}
+              onChange={(e) => setRoundSec(Math.max(0, Math.min(59, Math.floor(Number(e.target.value) || 0))))}
+            />
+          </div>
           <Select label="Break between rounds" value={breakMin} onChange={(e) => setBreakMin(Number(e.target.value))}>
             {[0, 0.5, 1, 2, 3, 5].map((n) => (
               <option key={n} value={n}>
@@ -184,16 +199,32 @@ export default function NewMatch() {
             ))}
           </Select>
         </div>
-        <p className="border-t border-line px-4 py-2 text-sm text-muted">
-          Total time about <span className="font-bold text-text">{totalMin} min</span>
-        </p>
+        <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2 text-xs text-muted">
+          <span>Presets:</span>
+          {[1, 2, 3, 4, 5, 6, 10, 15].map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setRoundMin(m)
+                setRoundSec(0)
+              }}
+              className={`border px-2 py-0.5 font-mono ${roundMin === m && roundSec === 0 ? 'border-amber text-amber' : 'border-line-2 hover:text-text'}`}
+            >
+              {m}m
+            </button>
+          ))}
+          <span className="ml-auto text-sm">
+            Total time about <span className="font-bold text-text">{totalMin} min</span>
+          </span>
+        </div>
       </Panel>
 
       {!editId && (
         <QuickStart
           players={players}
           kits={kits}
-          timing={{ name, rounds, roundSeconds: Math.round(roundMin * 60), breakSeconds: Math.round(breakMin * 60) }}
+          timing={{ name, rounds, roundSeconds: roundTotalSec, breakSeconds: Math.round(breakMin * 60) }}
           onPlayerCreated={(p) => setPlayers((cur) => [p, ...(cur ?? [])])}
         />
       )}

@@ -35,6 +35,7 @@ export default function Layout() {
   const { user, logout } = useAuth()
   const nav = [
     { to: '/command', label: 'Live', d: icon.live, end: true },
+    ...(user?.role === 'admin' ? [{ to: '/command/dashboard', label: 'Dashboard', d: icon.trophy }] : []),
     { to: '/command/players', label: 'Players', d: icon.players },
     { to: '/command/matches/new', label: 'New match', d: icon.plus },
     { to: '/command/bookings', label: 'Bookings', d: icon.calendar },

@@ -23,6 +23,7 @@ export default function App() {
             <Route path=":page" element={<Legal />} />
           </Route>
           <Route path="/display" element={<Display />} />
+          <Route path="/admin/login" element={<StaffApp />} />
           <Route path="/command/*" element={<StaffApp />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

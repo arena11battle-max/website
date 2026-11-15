@@ -72,15 +72,23 @@ export default function Display() {
               <TeamRoster board={board} team="blue" />
             </div>
           </div>
-          {board.match.status === 'finished' && board.mvp && (
+          {board.match.status === 'finished' && (
             <div className="hud hud-corner p-4 text-center">
-              <span className="label text-amber">Most valuable soldier</span>
-              <div className={`font-display text-4xl ${board.mvp.team === 'red' ? 'text-red glow-red' : 'text-blue glow-blue'}`}>
-                {board.mvp.displayName}
-              </div>
-              <div className="text-muted">
-                {board.mvp.kills} kills · {board.mvp.damageDealt} damage
-              </div>
+              <span className="label text-amber">Match Winner</span>
+              {board.match.winner === null ? (
+                <div className="font-display text-3xl uppercase text-muted">No valid scoring events</div>
+              ) : board.match.winner === 'draw' ? (
+                <div className="font-display text-5xl uppercase text-amber">DRAW</div>
+              ) : (
+                <div className={`font-display text-5xl uppercase ${board.match.winner === 'red' ? 'text-red glow-red' : 'text-blue glow-blue'}`}>
+                  {board.match.winner === 'red' ? BRAND.red : BRAND.blue} Wins
+                </div>
+              )}
+              {board.mvp && (
+                <div className="mt-2 text-sm text-muted">
+                  MVP: <span className="font-bold text-text">{board.mvp.displayName}</span> · {board.mvp.kills} kills · {board.mvp.damageDealt} damage
+                </div>
+              )}
             </div>
           )}
         </>

@@ -21,6 +21,13 @@ const Env = z.object({
   // Venue time zone, used for "today" on the leaderboard.
   TIME_ZONE: z.string().default('Asia/Kolkata'),
   WEB_DIST: z.string().default('../web/dist'),
+  // Online payments (Razorpay). Leave empty in development to use the built-in test checkout.
+  RAZORPAY_KEY_ID: z.string().default(''),
+  RAZORPAY_KEY_SECRET: z.string().default(''),
+  RAZORPAY_WEBHOOK_SECRET: z.string().default(''),
+  // Customer Mobile OTP settings
+  OTP_EXPIRY_SECONDS: z.coerce.number().int().min(60).max(900).default(300),
+  OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(10).max(300).default(30),
 });
 
 const parsed = Env.parse(process.env);

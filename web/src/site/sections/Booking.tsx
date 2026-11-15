@@ -1,300 +1,565 @@
-import { Link } from 'react-router-dom'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { WEAPONS } from '../../three/data'
-import { GAME_MODES, onBookingIntent, type GameModeId } from '../bookingIntent'
-import { gsap, useGsap } from '../motion'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useSiteSettings } from '../settings'
 import { SplitWords } from '../SplitWords'
 
-interface Form {
-  name: string
-  phone: string
-  email: string
-  players: string
-  date: string
-  time: string
-  notes: string
-  mode: GameModeId | ''
-  loadout: string
-  website: string
+interface Customer {
+  id: number
+  mobile: string
+  name: string | null
+  email: string | null
 }
 
-const EMPTY: Form = { name: '', phone: '', email: '', players: '4', date: '', time: '', notes: '', mode: '', loadout: '', website: '' }
+interface PackageOption {
+  id: '1v1' | '2v2' | '3v3' | '4v4'
+  name: string
+  players: number
+  amountInr: number
+}
+
+interface SlotOption {
+  time: string
+  available: boolean
+}
+
+interface CustomerBooking {
+  id: number
+  reference: string
+  packageId: string | null
+  packageName: string | null
+  players: number
+  date: string
+  time: string
+  amountInr: number
+  status: string
+  receiptNo: string | null
+  paymentId: string | null
+  paymentStatus: string | null
+  paymentMethod: string | null
+}
+
+const PACKAGES: PackageOption[] = [
+  { id: '1v1', name: '1 vs 1 Tactical Duel', players: 2, amountInr: 400 },
+  { id: '2v2', name: '2 vs 2 Squad Skirmish', players: 4, amountInr: 800 },
+  { id: '3v3', name: '3 vs 3 Arena Clash', players: 6, amountInr: 1200 },
+  { id: '4v4', name: '4 vs 4 Full Arena', players: 8, amountInr: 1500 },
+]
+
+const CUSTOMER_TOKEN_KEY = 'arena11_customer_token'
 
 function today() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-export function validateBooking(f: Form) {
-  const e: Partial<Record<keyof Form, string>> = {}
+export function validateBooking(f: { name: string; date: string; time: string }) {
+  const e: Record<string, string> = {}
   if (f.name.trim().length < 2) e.name = 'Enter your name.'
-  if (!/^\+?[0-9][0-9\s-]{8,16}$/.test(f.phone.trim())) e.phone = 'Enter a valid phone number.'
-  if (f.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) e.email = 'Enter a valid email or leave it blank.'
-  const n = Number(f.players)
-  if (!Number.isInteger(n) || n < 2 || n > 8) e.players = 'Between 2 and 8 players.'
-  if (!f.date) e.date = 'Pick a date.'
-  else if (f.date < today()) e.date = 'Pick today or a future date.'
-  if (!f.time) e.time = 'Pick a time.'
-  if (f.notes.length > 1000) e.notes = 'Keep it under 1000 characters.'
+  if (!f.date || f.date < today()) e.date = 'Pick today or a future date.'
+  if (!f.time) e.time = 'Pick an available time slot.'
   return e
 }
 
-function Input({ label, error, id, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string; id: string }) {
-  return (
-    <label htmlFor={id} className="bk-field block">
-      <span className="label">{label}</span>
-      <span className="field-wrap mt-1.5">
-        <input id={id} {...props} aria-invalid={!!error} aria-describedby={error ? `${id}-err` : undefined} className={`field ${error ? '!border-red' : ''}`} />
-      </span>
-      {error && (
-        <span id={`${id}-err`} className="mt-1 block text-sm text-red">
-          {error}
-        </span>
-      )}
-    </label>
-  )
-}
-
-function Choice<T extends string>({ name, label, value, options, onChange }: { name: string; label: string; value: T | ''; options: { id: T; label: string }[]; onChange: (v: T | '') => void }) {
-  return (
-    <fieldset className="bk-field sm:col-span-2">
-      <legend className="label">{label}</legend>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {[{ id: '' as T | '', label: 'No preference' }, ...options].map((o) => (
-          <label key={o.id || 'none'} className={`choice ${value === o.id ? 'is-on' : ''}`}>
-            <input type="radio" name={name} value={o.id} checked={value === o.id} onChange={() => onChange(o.id)} className="sr-only" />
-            {o.label}
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  )
-}
-
-/** Animated "request logged" card: a ring draws, the tick strikes, and the reference types out. */
-function Confirmation({ reference, summary, onAgain }: { reference: string; summary: string; onAgain: () => void }) {
-  const root = useRef<HTMLDivElement>(null)
-  const ref = useRef<HTMLSpanElement>(null)
-  useGsap(root, (el) => {
-    const q = gsap.utils.selector(el)
-    const tl = gsap.timeline()
-    tl.from(el, { clipPath: 'inset(50% 0% 50% 0%)', duration: 0.7, ease: 'expo.inOut' })
-      .fromTo(q('.cf-ring'), { strokeDashoffset: 176 }, { strokeDashoffset: 0, duration: 0.9, ease: 'power2.inOut' }, 0.3)
-      .fromTo(q('.cf-tick'), { strokeDashoffset: 40 }, { strokeDashoffset: 0, duration: 0.45, ease: 'power3.out' }, 1.05)
-      .from(q('.cf-stamp'), { scale: 1.8, opacity: 0, rotate: -8, duration: 0.5, ease: 'back.out(2)' }, 1.2)
-      .from(q('.cf-rise'), { y: 18, opacity: 0, stagger: 0.1, duration: 0.6, ease: 'power3.out' }, 1.4)
-    const obj = { n: 0 }
-    tl.to(obj, { n: reference.length, duration: 0.8, ease: 'none', onUpdate: () => ref.current && (ref.current.textContent = reference.slice(0, Math.round(obj.n))) }, 1.5)
-  })
-  return (
-    <div ref={root} className="plate mt-8 overflow-hidden p-8 sm:p-10" role="status">
-      <div className="flex items-center gap-5">
-        <svg viewBox="0 0 64 64" className="h-16 w-16 shrink-0" aria-hidden>
-          <circle cx="32" cy="32" r="28" fill="none" stroke="rgb(255 255 255 / 0.1)" strokeWidth="2" />
-          <circle className="cf-ring" cx="32" cy="32" r="28" fill="none" stroke="var(--color-hazard)" strokeWidth="2.5" strokeDasharray="176" transform="rotate(-90 32 32)" />
-          <path className="cf-tick" d="M20 33l8 8 16-17" fill="none" stroke="var(--color-bone)" strokeWidth="3" strokeLinecap="square" strokeDasharray="40" />
-        </svg>
-        <div>
-          <span className="cf-stamp inline-block border-2 border-hazard px-2 py-0.5 font-display text-sm uppercase tracking-[0.2em] text-hazard">Request logged</span>
-          <p className="cf-rise mt-2 font-display text-2xl uppercase text-bone sm:text-3xl">Deployment request received</p>
-        </div>
-      </div>
-      <p className="cf-rise mt-6 font-mono text-sm uppercase tracking-[0.2em] text-smoke">
-        Reference <span ref={ref} className="digits text-bone">{reference}</span>
-      </p>
-      {summary && <p className="cf-rise mt-2 text-bone/80">{summary}</p>}
-      <p className="cf-rise mt-4 text-smoke">This is an enquiry, not a confirmed booking. Our team will call you to confirm the slot.</p>
-      <button type="button" className="cf-rise btn-ghost mt-8 text-xs" onClick={onAgain}>
-        Send another enquiry
-      </button>
-    </div>
-  )
+async function hmacSha256Hex(secret: string, data: string) {
+  const enc = new TextEncoder()
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(data))
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 export default function Booking() {
   const s = useSiteSettings()
-  const root = useRef<HTMLElement>(null)
-  const form = useRef<HTMLFormElement>(null)
-  const [f, setF] = useState<Form>(EMPTY)
-  const [errors, setErrors] = useState<Partial<Record<keyof Form, string>>>({})
-  const [state, setState] = useState<'idle' | 'sending' | 'error'>('idle')
-  const [serverError, setServerError] = useState('')
-  const [done, setDone] = useState<{ reference: string; summary: string } | null>(null)
-  const set = (k: keyof Form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value })
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(CUSTOMER_TOKEN_KEY))
+  const [customer, setCustomer] = useState<Customer | null>(null)
+  const [myBookings, setMyBookings] = useState<CustomerBooking[]>([])
 
-  // Cards elsewhere on the page can preselect a mode or loadout.
-  useEffect(
-    () =>
-      onBookingIntent((intent) => {
-        setDone(null)
-        setF((cur) => ({ ...cur, mode: intent.mode ?? cur.mode, loadout: intent.loadout ?? cur.loadout }))
-        const el = form.current
-        if (el && matchMedia('(prefers-reduced-motion: no-preference)').matches)
-          gsap.fromTo(el, { boxShadow: '0 0 0 1px rgb(255 90 31 / 0.9), 0 0 60px rgb(255 90 31 / 0.25)' }, { boxShadow: '0 0 0 1px rgb(255 90 31 / 0), 0 0 0 rgb(0 0 0 / 0)', duration: 1.8, delay: 1 })
-      }),
-    [],
-  )
+  // OTP Login state
+  const [mobile, setMobile] = useState('')
+  const [otpSent, setOtpSent] = useState(false)
+  const [otp, setOtp] = useState('')
+  const [devOtpHint, setDevOtpHint] = useState<string | null>(null)
+  const [cooldown, setCooldown] = useState(0)
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authError, setAuthError] = useState('')
 
-  useGsap(root, (el) => {
-    const q = gsap.utils.selector(el)
-    gsap.from(q('.bk-field'), { y: 30, opacity: 0, duration: 0.8, ease: 'power3.out', stagger: 0.06, scrollTrigger: { trigger: q('form')[0] ?? el, start: 'top 80%' } })
-  })
+  // Booking state
+  const [pkgId, setPkgId] = useState<PackageOption['id']>('1v1')
+  const [date, setDate] = useState(today())
+  const [slots, setSlots] = useState<SlotOption[]>([])
+  const [time, setTime] = useState('')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [notes, setNotes] = useState('')
+  const [bookingBusy, setBookingBusy] = useState(false)
+  const [bookingError, setBookingError] = useState('')
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
-    const errs = validateBooking(f)
-    setErrors(errs)
-    if (Object.keys(errs).length) {
-      if (form.current && matchMedia('(prefers-reduced-motion: no-preference)').matches) gsap.fromTo(form.current, { x: -8 }, { x: 0, duration: 0.5, ease: 'elastic.out(1, 0.3)' })
-      return
-    }
-    if (import.meta.env.VITE_PREVIEW) {
-      setServerError('This is a preview of the website, so enquiries are not sent yet. Booking goes live once the site is hosted with its server.')
-      setState('error')
-      return
-    }
-    setState('sending')
+  // Payment state
+  const [activeOrder, setActiveOrder] = useState<{
+    bookingId: number
+    reference: string
+    orderId: string
+    amountInr: number
+    receiptNo: string
+    mode: 'live' | 'test'
+    keyId: string
+  } | null>(null)
+  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'card' | 'netbanking'>('upi')
+  const [payBusy, setPayBusy] = useState(false)
+  const [receipt, setReceipt] = useState<{ receiptNo: string; pdfUrl: string } | null>(null)
+
+  const loadCustomer = useCallback(async (tok: string) => {
     try {
-      const res = await fetch('/api/public/bookings', {
+      const res = await fetch('/api/customer/me', { headers: { authorization: `Bearer ${tok}` } })
+      if (!res.ok) {
+        localStorage.removeItem(CUSTOMER_TOKEN_KEY)
+        setToken(null)
+        setCustomer(null)
+        return
+      }
+      const data = await res.json()
+      setCustomer(data.customer)
+      setMyBookings(data.bookings ?? [])
+      if (data.customer?.name) setName((cur) => cur || data.customer.name)
+      if (data.customer?.email) setEmail((cur) => cur || data.customer.email)
+    } catch {
+      // ignore transient network errors
+    }
+  }, [])
+
+  useEffect(() => {
+    if (token) loadCustomer(token)
+  }, [token, loadCustomer])
+
+  const loadSlots = useCallback(async (d: string) => {
+    if (!d) return
+    try {
+      const res = await fetch(`/api/public/bookings/slots?date=${encodeURIComponent(d)}`)
+      if (!res.ok) return
+      const data = await res.json()
+      setSlots(data.slots ?? [])
+      setTime((cur) => (data.slots?.some((x: SlotOption) => x.time === cur && x.available) ? cur : ''))
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    loadSlots(date)
+  }, [date, loadSlots])
+
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const id = setTimeout(() => setCooldown((c) => Math.max(0, c - 1)), 1000)
+    return () => clearTimeout(id)
+  }, [cooldown])
+
+  async function sendOtp(e?: FormEvent) {
+    e?.preventDefault()
+    setAuthBusy(true)
+    setAuthError('')
+    try {
+      const res = await fetch('/api/customer/auth/send-otp', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          name: f.name.trim(),
-          phone: f.phone.trim(),
-          email: f.email.trim() || undefined,
-          players: Number(f.players),
-          date: f.date,
-          time: f.time,
-          notes: f.notes.trim() || undefined,
-          mode: f.mode || undefined,
-          loadout: f.loadout || undefined,
-          website: f.website,
-        }),
+        body: JSON.stringify({ mobile }),
       })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body.error ?? 'Could not send your enquiry.')
-      const mode = GAME_MODES.find((m) => m.id === f.mode)?.label
-      setDone({
-        reference: body.reference,
-        summary: [`${f.players} players`, new Date(`${f.date}T00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ` at ${f.time}`, mode, f.loadout && `${f.loadout} loadout`]
-          .filter(Boolean)
-          .join(' · '),
-      })
-      setF(EMPTY)
-      setState('idle')
-    } catch (err) {
-      setServerError(err instanceof Error ? err.message : 'Could not send your enquiry.')
-      setState('error')
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setAuthError(data.error || 'Could not send OTP')
+        if (data.retryAfterSeconds) setCooldown(data.retryAfterSeconds)
+        return
+      }
+      setOtpSent(true)
+      setCooldown(data.cooldownSeconds ?? 30)
+      setDevOtpHint(data.devOtp ?? null)
+    } catch {
+      setAuthError('Network error while sending OTP.')
+    } finally {
+      setAuthBusy(false)
     }
   }
 
+  async function verifyOtp(e: FormEvent) {
+    e.preventDefault()
+    setAuthBusy(true)
+    setAuthError('')
+    try {
+      const res = await fetch('/api/customer/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mobile, otp }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setAuthError(data.error || 'OTP verification failed')
+        return
+      }
+      localStorage.setItem(CUSTOMER_TOKEN_KEY, data.token)
+      setToken(data.token)
+      setCustomer(data.customer)
+      setOtp('')
+      setOtpSent(false)
+      setDevOtpHint(null)
+    } catch {
+      setAuthError('Network error while verifying OTP.')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  function logoutCustomer() {
+    localStorage.removeItem(CUSTOMER_TOKEN_KEY)
+    setToken(null)
+    setCustomer(null)
+    setMyBookings([])
+    setActiveOrder(null)
+    setReceipt(null)
+  }
+
+  async function createBookingAndOrder(e: FormEvent) {
+    e.preventDefault()
+    if (!token) return
+    const errs = validateBooking({ name, date, time })
+    if (Object.keys(errs).length) {
+      setBookingError(Object.values(errs)[0])
+      return
+    }
+    setBookingBusy(true)
+    setBookingError('')
+    setReceipt(null)
+    try {
+      const bRes = await fetch('/api/customer/bookings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ packageId: pkgId, date, time, name: name.trim(), email: email.trim() || undefined, notes: notes.trim() || undefined }),
+      })
+      const bData = await bRes.json().catch(() => ({}))
+      if (!bRes.ok) {
+        setBookingError(bData.error || 'Could not create booking')
+        loadSlots(date)
+        return
+      }
+      const oRes = await fetch('/api/customer/payments/create-order', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ bookingId: bData.booking.id }),
+      })
+      const oData = await oRes.json().catch(() => ({}))
+      if (!oRes.ok) {
+        setBookingError(oData.error || 'Could not create payment order')
+        return
+      }
+      setActiveOrder({
+        bookingId: bData.booking.id,
+        reference: bData.booking.reference,
+        orderId: oData.orderId,
+        amountInr: oData.amountInr,
+        receiptNo: oData.receiptNo,
+        mode: oData.mode,
+        keyId: oData.keyId,
+      })
+      loadSlots(date)
+      loadCustomer(token)
+    } catch {
+      setBookingError('Network error while creating booking.')
+    } finally {
+      setBookingBusy(false)
+    }
+  }
+
+  async function completeTestPayment() {
+    if (!token || !activeOrder) return
+    setPayBusy(true)
+    setBookingError('')
+    try {
+      const paymentId = `pay_test_${Math.random().toString(16).slice(2, 10)}`
+      const signature = await hmacSha256Hex('arena11-test-gateway', `${activeOrder.orderId}|${paymentId}`)
+      const res = await fetch('/api/customer/payments/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orderId: activeOrder.orderId, paymentId, signature, method: paymentMethod }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setBookingError(data.error || 'Payment verification failed')
+        return
+      }
+      setReceipt({ receiptNo: data.receiptNo, pdfUrl: data.receiptPdfUrl })
+      setActiveOrder(null)
+      loadCustomer(token)
+    } catch {
+      setBookingError('Network error during payment verification.')
+    } finally {
+      setPayBusy(false)
+    }
+  }
+
+  async function failTestPayment() {
+    if (!token || !activeOrder) return
+    setPayBusy(true)
+    try {
+      await fetch('/api/customer/payments/fail', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orderId: activeOrder.orderId, reason: 'customer_cancelled' }),
+      })
+      setBookingError('Payment failed or was cancelled. Your booking remains pending.')
+      setActiveOrder(null)
+      loadCustomer(token)
+    } finally {
+      setPayBusy(false)
+    }
+  }
+
+  const selectedPkg = PACKAGES.find((p) => p.id === pkgId)!
+
   return (
-    <section ref={root} id="book" className="site-section bg-[#080808]" aria-labelledby="book-title">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-        <img src="/media/real/arena-field.webp" alt="" loading="lazy" data-parallax="0.25" className="h-[130%] w-full object-cover opacity-[0.12]" />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#080808] via-transparent to-[#080808]" />
-      </div>
-      <div className="relative mx-auto grid max-w-[1440px] gap-10 lg:grid-cols-[1.3fr_1fr]">
-        <div>
-          <p className="kicker">12 // Deployment request</p>
-          <SplitWords as="h2" id="book-title" className="headline mt-4 text-bone" parts={['Book your', { t: 'match', className: 'text-hazard' }]} />
-          <p className="reveal mt-4 max-w-xl text-smoke">
-            Send an enquiry and our team will call you to confirm the slot. Submitting this form does not confirm a booking.
-          </p>
-
-          {done ? (
-            <Confirmation reference={done.reference} summary={done.summary} onAgain={() => setDone(null)} />
-          ) : (
-            <form ref={form} onSubmit={submit} noValidate className="plate mt-8 grid gap-5 p-6 transition-shadow sm:grid-cols-2 sm:p-8">
-              <Input id="b-name" label="Name" autoComplete="name" value={f.name} onChange={set('name')} error={errors.name} required />
-              <Input id="b-phone" label="Contact number" type="tel" autoComplete="tel" inputMode="tel" value={f.phone} onChange={set('phone')} error={errors.phone} required />
-              <Input id="b-email" label="Email (optional)" type="email" autoComplete="email" value={f.email} onChange={set('email')} error={errors.email} />
-              <label htmlFor="b-players" className="bk-field block">
-                <span className="label">Number of players</span>
-                <span className="field-wrap mt-1.5">
-                  <select id="b-players" value={f.players} onChange={set('players')} className="field">
-                    {[2, 3, 4, 5, 6, 7, 8].map((n) => (
-                      <option key={n} value={n}>
-                        {n} players
-                      </option>
-                    ))}
-                  </select>
-                </span>
-                {errors.players && <span className="mt-1 block text-sm text-red">{errors.players}</span>}
-              </label>
-              <Input id="b-date" label="Preferred date" type="date" min={today()} value={f.date} onChange={set('date')} error={errors.date} required />
-              <Input id="b-time" label="Preferred time" type="time" value={f.time} onChange={set('time')} error={errors.time} required />
-              <Choice name="mode" label="Game mode" value={f.mode} options={GAME_MODES.map((m) => ({ id: m.id, label: m.label }))} onChange={(v) => setF({ ...f, mode: v })} />
-              <Choice name="loadout" label="Preferred loadout" value={f.loadout} options={WEAPONS.map((w) => ({ id: w.name, label: w.name }))} onChange={(v) => setF({ ...f, loadout: v })} />
-              <label htmlFor="b-notes" className="bk-field block sm:col-span-2">
-                <span className="label">Special requests</span>
-                <span className="field-wrap mt-1.5">
-                  <textarea id="b-notes" rows={4} value={f.notes} onChange={set('notes')} className="field resize-y" placeholder="Birthday, corporate team, custom mission setup…" />
-                </span>
-                {errors.notes && <span className="mt-1 block text-sm text-red">{errors.notes}</span>}
-              </label>
-              {/* Honeypot for bots; hidden from people and screen readers. */}
-              <input type="text" name="website" value={f.website} onChange={set('website')} tabIndex={-1} autoComplete="off" className="hidden" aria-hidden />
-              {state === 'error' && <p className="text-sm text-red sm:col-span-2">{serverError}</p>}
-              <button type="submit" disabled={state === 'sending'} className={`bk-field btn-hazard relative overflow-hidden sm:col-span-2 ${state === 'sending' ? 'is-sending' : ''}`}>
-                <span className="relative">{state === 'sending' ? 'Transmitting…' : 'Send enquiry'}</span>
-              </button>
-              <p className="text-xs text-dim sm:col-span-2">
-                We use your details only to respond to this enquiry. See the <Link to="/privacy" className="underline">privacy policy</Link>.
+    <section id="book" className="relative overflow-hidden bg-[#080808] px-[var(--edge)] py-24 sm:py-32">
+      <div className="mx-auto max-w-[1440px]">
+        <div className="grid gap-12 lg:grid-cols-[5fr_7fr] lg:gap-16">
+          <div>
+            <p className="kicker">Online Booking &amp; Payment</p>
+            <SplitWords as="h2" className="headline mt-4 text-bone" parts={[{ t: 'Book your' }, { t: 'mission', className: 'text-hazard' }]} />
+            <p className="mt-5 max-w-md text-lg text-bone/75">
+              Sign in with your Indian mobile number (+91 OTP), pick an available slot, and pay online via UPI, Card, or Netbanking.
+            </p>
+            {s.hours && (
+              <p className="mt-6 font-mono text-xs uppercase tracking-[0.2em] text-smoke">
+                Arena Hours: <span className="text-bone">{s.hours}</span>
               </p>
-            </form>
-          )}
-        </div>
+            )}
 
-        <aside className="reveal space-y-4" style={{ '--d': '150ms' } as React.CSSProperties}>
-          <div className="plate p-6">
-            <h3 className="label !text-hazard">Location</h3>
-            <p className="mt-2 whitespace-pre-line text-lg">{s.address || 'Venue address to be announced.'}</p>
-            {s.directions && <p className="mt-2 text-sm text-smoke">{s.directions}</p>}
-            {s.mapsUrl && (
-              <a href={s.mapsUrl} target="_blank" rel="noopener noreferrer" className="btn-ghost mt-4 text-xs">
-                Get directions
-              </a>
+            {customer && myBookings.length > 0 && (
+              <div className="plate mt-8 p-5">
+                <p className="font-mono text-xs uppercase tracking-[0.2em] text-hazard">Your Bookings</p>
+                <ul className="mt-3 divide-y divide-white/10 text-sm">
+                  {myBookings.slice(0, 5).map((b) => (
+                    <li key={b.id} className="flex items-center justify-between gap-2 py-2.5">
+                      <div>
+                        <div className="font-mono text-xs text-bone">{b.reference} · {b.packageName ?? `${b.players} players`}</div>
+                        <div className="text-xs text-smoke">{b.date} at {b.time} · ₹{b.amountInr}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="border border-white/15 px-2 py-0.5 font-mono text-[10px] uppercase text-hazard">
+                          {b.status.replace(/_/g, ' ')}
+                        </span>
+                        {b.receiptNo && b.paymentStatus === 'paid' && (
+                          <a href={`/api/customer/payments/${b.receiptNo}/pdf`} className="font-mono text-xs text-lime underline">
+                            Receipt
+                          </a>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
-          <div className="plate p-6">
-            <h3 className="label !text-hazard">Contact</h3>
-            <dl className="mt-2 space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-smoke">Phone</dt>
-                <dd>{s.phone ? <a href={`tel:${s.phone.replace(/\s/g, '')}`}>{s.phone}</a> : <span className="text-dim">To be announced</span>}</dd>
+
+          <div>
+            {!customer ? (
+              <div className="plate p-6 sm:p-8">
+                <p className="font-mono text-xs uppercase tracking-[0.25em] text-hazard">Step 1 // Mobile OTP Login</p>
+                <h3 className="mt-2 font-display text-2xl uppercase text-bone">Verify Your Mobile Number</h3>
+
+                {!otpSent ? (
+                  <form onSubmit={sendOtp} className="mt-6 space-y-4">
+                    <label className="block">
+                      <span className="label">Indian Mobile Number (+91)</span>
+                      <span className="field-wrap mt-1.5">
+                        <input
+                          type="tel"
+                          required
+                          value={mobile}
+                          onChange={(e) => setMobile(e.target.value)}
+                          placeholder="+91 98765 43210"
+                          className="field"
+                        />
+                      </span>
+                    </label>
+                    {authError && <p className="text-sm text-red">{authError}</p>}
+                    <button type="submit" disabled={authBusy} className="btn-hazard">
+                      {authBusy ? 'Sending OTP…' : 'Send OTP'}
+                    </button>
+                  </form>
+                ) : (
+                  <form onSubmit={verifyOtp} className="mt-6 space-y-4">
+                    <p className="text-sm text-smoke">
+                      Enter the 6-digit OTP sent to <span className="font-mono text-bone">{mobile}</span>.
+                    </p>
+                    {devOtpHint && (
+                      <p className="border border-amber/40 bg-amber/10 px-3 py-2 font-mono text-xs text-amber">
+                        Dev/Test OTP: <strong>{devOtpHint}</strong>
+                      </p>
+                    )}
+                    <label className="block">
+                      <span className="label">6-Digit OTP</span>
+                      <span className="field-wrap mt-1.5">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={6}
+                          required
+                          value={otp}
+                          onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                          placeholder="123456"
+                          className="field font-mono tracking-[0.3em]"
+                        />
+                      </span>
+                    </label>
+                    {authError && <p className="text-sm text-red">{authError}</p>}
+                    <div className="flex flex-wrap gap-3">
+                      <button type="submit" disabled={authBusy} className="btn-hazard">
+                        {authBusy ? 'Verifying…' : 'Verify & Continue'}
+                      </button>
+                      <button type="button" disabled={cooldown > 0 || authBusy} onClick={() => sendOtp()} className="btn-ghost text-xs">
+                        {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend OTP'}
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
-              {s.whatsapp && (
-                <div className="flex justify-between gap-4">
-                  <dt className="text-smoke">WhatsApp</dt>
-                  <dd>
-                    <a href={`https://wa.me/${s.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer">
-                      {s.whatsapp}
-                    </a>
-                  </dd>
+            ) : receipt ? (
+              <div className="plate p-6 sm:p-8" role="status">
+                <span className="inline-block border-2 border-lime px-2.5 py-0.5 font-display text-xs uppercase tracking-[0.2em] text-lime">
+                  Payment Successful
+                </span>
+                <h3 className="mt-3 font-display text-3xl uppercase text-bone">Booking Confirmed</h3>
+                <p className="mt-2 font-mono text-sm text-smoke">
+                  Receipt <span className="text-bone">{receipt.receiptNo}</span>
+                </p>
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <a href={receipt.pdfUrl} download={`${receipt.receiptNo}.pdf`} className="btn-hazard">
+                    Download Payment Receipt PDF
+                  </a>
+                  <button type="button" className="btn-ghost text-xs" onClick={() => setReceipt(null)}>
+                    Book Another Slot
+                  </button>
                 </div>
-              )}
-              <div className="flex justify-between gap-4">
-                <dt className="text-smoke">Email</dt>
-                <dd className="break-all text-right">{s.email ? <a href={`mailto:${s.email}`}>{s.email}</a> : <span className="text-dim">To be announced</span>}</dd>
               </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-smoke">Hours</dt>
-                <dd className="text-right">{s.hours || <span className="text-dim">To be announced</span>}</dd>
-              </div>
-              {s.pricePerHead && (
-                <div className="flex justify-between gap-4">
-                  <dt className="text-smoke">Price</dt>
-                  <dd>{s.pricePerHead}</dd>
+            ) : activeOrder ? (
+              <div className="plate space-y-5 p-6 sm:p-8">
+                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                  <div>
+                    <p className="font-mono text-xs uppercase tracking-[0.2em] text-hazard">Step 3 // Online Payment</p>
+                    <h3 className="font-display text-2xl uppercase text-bone">Pay ₹{activeOrder.amountInr}</h3>
+                  </div>
+                  <span className="font-mono text-xs text-smoke">{activeOrder.reference}</span>
                 </div>
-              )}
-            </dl>
+                <div>
+                  <span className="label">Payment Method (Razorpay)</span>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {(['upi', 'card', 'netbanking'] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setPaymentMethod(m)}
+                        className={`choice justify-center uppercase ${paymentMethod === m ? 'is-on' : ''}`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {bookingError && <p className="text-sm text-red">{bookingError}</p>}
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" disabled={payBusy} onClick={completeTestPayment} className="btn-hazard">
+                    {payBusy ? 'Processing…' : `Pay ₹${activeOrder.amountInr} (${paymentMethod.toUpperCase()})`}
+                  </button>
+                  <button type="button" disabled={payBusy} onClick={failTestPayment} className="btn-ghost text-xs text-red">
+                    Cancel / Simulate Failure
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={createBookingAndOrder} noValidate className="plate grid gap-5 p-6 sm:grid-cols-2 sm:p-8">
+                <div className="sm:col-span-2 flex items-center justify-between border-b border-white/10 pb-3">
+                  <div>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-lime">Verified: {customer.mobile}</p>
+                    <p className="font-display text-xl uppercase text-bone">Step 2 // Select Package &amp; Slot</p>
+                  </div>
+                  <button type="button" onClick={logoutCustomer} className="font-mono text-xs uppercase text-smoke hover:text-bone">
+                    Sign out
+                  </button>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <span className="label">Booking Package</span>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {PACKAGES.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setPkgId(p.id)}
+                        className={`choice justify-between px-4 py-3 text-left ${pkgId === p.id ? 'is-on' : ''}`}
+                      >
+                        <span>{p.name}</span>
+                        <span className="digits font-mono text-hazard">₹{p.amountInr}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <label className="block">
+                  <span className="label">Date *</span>
+                  <span className="field-wrap mt-1.5">
+                    <input type="date" min={today()} value={date} onChange={(e) => setDate(e.target.value)} className="field" required />
+                  </span>
+                </label>
+
+                <label className="block">
+                  <span className="label">Your Name *</span>
+                  <span className="field-wrap mt-1.5">
+                    <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" className="field" required />
+                  </span>
+                </label>
+
+                <div className="sm:col-span-2">
+                  <span className="label">Available Time Slots ({date}) *</span>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {slots.map((sl) => (
+                      <button
+                        key={sl.time}
+                        type="button"
+                        disabled={!sl.available}
+                        onClick={() => setTime(sl.time)}
+                        className={`choice font-mono text-xs ${time === sl.time ? 'is-on' : ''} ${!sl.available ? 'cursor-not-allowed opacity-35 line-through' : ''}`}
+                      >
+                        {sl.time} {!sl.available && '(Booked)'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <label className="block">
+                  <span className="label">Email (for receipt)</span>
+                  <span className="field-wrap mt-1.5">
+                    <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="field" />
+                  </span>
+                </label>
+
+                <label className="block">
+                  <span className="label">Notes (optional)</span>
+                  <span className="field-wrap mt-1.5">
+                    <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Special requests…" className="field" />
+                  </span>
+                </label>
+
+                {bookingError && <p className="sm:col-span-2 text-sm text-red">{bookingError}</p>}
+
+                <div className="sm:col-span-2 flex items-center justify-between border-t border-white/10 pt-4">
+                  <div className="font-mono text-sm text-smoke">
+                    Total: <span className="digits text-xl font-bold text-hazard">₹{selectedPkg.amountInr}</span>
+                  </div>
+                  <button type="submit" disabled={bookingBusy} className="btn-hazard">
+                    {bookingBusy ? 'Reserving Slot…' : `Confirm & Pay ₹${selectedPkg.amountInr}`}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
-          <div className="border border-amber/30 bg-amber/5 p-5 text-sm text-amber">
-            Eye protection is mandatory for every player. Read the <Link to="/safety" className="underline">safety rules</Link> before your mission.
-          </div>
-        </aside>
+        </div>
       </div>
     </section>
   )

@@ -28,7 +28,10 @@ const SettingsBody = z
   })
   .partial();
 
-const BOOKING_STATUS = ['new', 'contacted', 'confirmed', 'declined', 'cancelled'] as const;
+const BOOKING_STATUS = [
+  'new', 'pending', 'payment_successful', 'contacted', 'confirmed',
+  'declined', 'cancelled', 'completed', 'refund_pending', 'refunded',
+] as const;
 const CATEGORIES = ['arena', 'arsenal', 'teams', 'gameplay', 'bts'] as const;
 const MAX_IMAGE = 6 * 1024 * 1024;
 

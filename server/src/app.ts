@@ -20,6 +20,8 @@ import publicRoutes from './routes/public.js';
 import leaderboardRoutes from './routes/leaderboard.js';
 import websiteRoutes from './routes/website.js';
 import eventRoutes from './routes/events.js';
+import customerAuthRoutes from './routes/customerAuth.js';
+import paymentRoutes from './routes/payments.js';
 
 export interface StaffUser {
   id: number;
@@ -67,7 +69,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean } = {}) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        connectSrc: ["'self'", 'ws:', 'wss:'],
+        connectSrc: ["'self'", 'ws:', 'wss:', 'https://api.razorpay.com', 'https://lumberjack.razorpay.com'],
         imgSrc: ["'self'", 'data:', 'blob:'],
         mediaSrc: ["'self'"],
         workerSrc: ["'self'"],
@@ -75,10 +77,11 @@ export async function buildApp(db: Db, opts: { logger?: boolean } = {}) {
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         frameAncestors: ["'none'"],
+        frameSrc: ["'self'", 'https://api.razorpay.com', 'https://checkout.razorpay.com'],
         formAction: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         fontSrc: ["'self'", 'data:'],
-        scriptSrc: ["'self'"],
+        scriptSrc: ["'self'", 'https://checkout.razorpay.com'],
         upgradeInsecureRequests: null,
       },
     },
@@ -145,6 +148,8 @@ export async function buildApp(db: Db, opts: { logger?: boolean } = {}) {
   await app.register(leaderboardRoutes, { prefix: '/api' });
   await app.register(websiteRoutes, { prefix: '/api' });
   await app.register(eventRoutes, { prefix: '/api' });
+  await app.register(customerAuthRoutes, { prefix: '/api' });
+  await app.register(paymentRoutes, { prefix: '/api' });
 
   // Serve the built web app, with every non-API path falling back to index.html.
   const webDist = path.resolve(config.WEB_DIST);
