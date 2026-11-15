@@ -1,8 +1,8 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter } from 'nodemailer';
 
-let transporter: nodemailer.Transporter | null = null;
+let transporter: Transporter | null = null;
 
-function getTransporter(): { mailer: nodemailer.Transporter; from: string; to: string } | null {
+function getTransporter(): { mailer: Transporter; from: string; to: string } | null {
   const user = process.env.SMTP_USER?.trim();
   const pass = process.env.SMTP_PASS?.trim();
   if (!user || !pass) return null;
