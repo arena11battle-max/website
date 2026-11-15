@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { tx } from '../db.js';
+import { sendAdminBookingEmail } from '../notify.js';
 import { makeCustomerAuth } from './customerAuth.js';
 
 export const BOOKING_PACKAGES = [
@@ -174,6 +175,16 @@ const routes: FastifyPluginAsync = async (app) => {
         body.email ?? null,
         phone,
       ]);
+      void sendAdminBookingEmail(`ARENA11 New Booking: ${reference} (${body.date} ${body.time})`, [
+        `Reference: ${reference}`,
+        `Package: ${pkg.name} (${players} players) — ₹${pkg.amountInr}`,
+        `Slot: ${body.date} at ${body.time}`,
+        `Customer: ${body.name}`,
+        `Mobile: ${phone}`,
+        `Email: ${body.email ?? req.customer!.email ?? 'N/A'}`,
+        `Notes: ${body.notes ?? 'None'}`,
+        `Manage: /command/bookings`,
+      ]).catch((err) => req.log.warn({ err }, 'booking email alert failed'));
       return reply.code(201).send({ booking: rows[0] });
     } catch (err) {
       const e = err as { code?: string };
@@ -275,6 +286,32 @@ const routes: FastifyPluginAsync = async (app) => {
     });
 
     if (out.code !== 200) return reply.code(out.code).send({ error: out.error });
+    const { rows: bk } = await db.query<{
+      reference: string;
+      name: string;
+      phone: string;
+      package_name: string;
+      date: string;
+      time: string;
+      amount_inr: number;
+    }>(
+      `SELECT reference, name, phone, package_name, to_char(preferred_date, 'YYYY-MM-DD') AS date,
+              to_char(preferred_time, 'HH24:MI') AS time, amount_inr
+         FROM bookings WHERE id = $1`,
+      [out.bookingId],
+    );
+    if (bk[0]) {
+      const b = bk[0];
+      void sendAdminBookingEmail(`ARENA11 Payment Received: ₹${b.amount_inr} (${b.reference})`, [
+        `Receipt: ${out.receiptNo}`,
+        `Reference: ${b.reference}`,
+        `Amount: ₹${b.amount_inr} (${body.method ?? 'upi'})`,
+        `Payment ID: ${body.paymentId}`,
+        `Package: ${b.package_name}`,
+        `Slot: ${b.date} at ${b.time}`,
+        `Customer: ${b.name} (${b.phone})`,
+      ]).catch((err) => req.log.warn({ err }, 'payment email alert failed'));
+    }
     return { ok: true, status: 'payment_successful', receiptNo: out.receiptNo, receiptPdfUrl: `/api/customer/payments/${out.receiptNo}/pdf` };
   });
 
