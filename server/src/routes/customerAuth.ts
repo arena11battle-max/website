@@ -6,7 +6,7 @@ import { config } from '../config.js';
 
 export interface CustomerUser {
   id: number;
-  mobile: string;
+  mobile: string | null;
   name: string | null;
   email: string | null;
 }
@@ -21,14 +21,14 @@ function customerSecret() {
   return crypto.createHmac('sha256', config.APP_SECRET).update('customer-auth-v1').digest('hex');
 }
 
-export function signCustomerToken(customerId: number, mobile: string): string {
+export function signCustomerToken(customerId: number, mobile: string | null): string {
   return jwt.sign({ sub: customerId, mobile, kind: 'customer' }, customerSecret(), { expiresIn: '7d' });
 }
 
-export function verifyCustomerToken(token: string): { sub: number; mobile: string } | null {
+export function verifyCustomerToken(token: string): { sub: number; mobile: string | null } | null {
   try {
     const p = jwt.verify(token, customerSecret()) as jwt.JwtPayload & { sub?: unknown; mobile?: unknown; kind?: unknown };
-    if (p.kind !== 'customer' || typeof p.sub !== 'number' || typeof p.mobile !== 'string') return null;
+    if (p.kind !== 'customer' || typeof p.sub !== 'number' || (typeof p.mobile !== 'string' && p.mobile !== null)) return null;
     return { sub: p.sub, mobile: p.mobile };
   } catch {
     return null;
@@ -115,33 +115,66 @@ const routes: FastifyPluginAsync = async (app) => {
       const cert = certs[kid];
       if (!cert) return reply.code(401).send({ error: 'Unrecognized Firebase signing key' });
 
-      let payload: jwt.JwtPayload & { phone_number?: unknown };
+      let payload: jwt.JwtPayload & { phone_number?: unknown; email?: unknown; email_verified?: unknown; name?: unknown };
       try {
         payload = jwt.verify(idToken, cert, {
           algorithms: ['RS256'],
           audience: fb.projectId,
           issuer: `https://securetoken.google.com/${fb.projectId}`,
-        }) as jwt.JwtPayload & { phone_number?: unknown };
+        }) as jwt.JwtPayload & { phone_number?: unknown; email?: unknown; email_verified?: unknown; name?: unknown };
       } catch {
-        return reply.code(401).send({ error: 'Expired or invalid Firebase Phone Auth token' });
+        return reply.code(401).send({ error: 'Expired or invalid Firebase Auth token' });
       }
 
-      if (!payload.sub || typeof payload.phone_number !== 'string') {
-        return reply.code(401).send({ error: 'Verified phone number missing from Firebase token' });
+      if (!payload.sub) {
+        return reply.code(401).send({ error: 'Invalid Firebase token subject' });
       }
-      const mobile = normalizeIndianMobile(payload.phone_number) ?? payload.phone_number;
 
-      const { rows: upserted } = await db.query<CustomerUser>(
-        `INSERT INTO customers (mobile, name, email, verified_at)
-         VALUES ($1, $2, $3, now())
-         ON CONFLICT (mobile) DO UPDATE SET
-           name = COALESCE(NULLIF(EXCLUDED.name, ''), customers.name),
-           email = COALESCE(NULLIF(EXCLUDED.email, ''), customers.email),
-           verified_at = COALESCE(customers.verified_at, now())
-         RETURNING id, mobile, name, email`,
-        [mobile, name ?? null, email ?? null],
-      );
-      const customer = upserted[0];
+      const tokenPhone = typeof payload.phone_number === 'string' ? (normalizeIndianMobile(payload.phone_number) ?? payload.phone_number) : null;
+      const tokenEmail = typeof payload.email === 'string' && payload.email.trim() ? payload.email.trim().toLowerCase() : null;
+      const tokenName = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim().slice(0, 80) : null;
+
+      let customer: CustomerUser;
+      if (tokenPhone) {
+        const { rows: upserted } = await db.query<CustomerUser>(
+          `INSERT INTO customers (mobile, name, email, last_login_at)
+           VALUES ($1, $2, $3, now())
+           ON CONFLICT (mobile) DO UPDATE SET
+             name = COALESCE(NULLIF(EXCLUDED.name, ''), customers.name),
+             email = COALESCE(NULLIF(EXCLUDED.email, ''), customers.email),
+             last_login_at = now()
+           RETURNING id, mobile, name, email`,
+          [tokenPhone, name ?? tokenName, email ?? tokenEmail],
+        );
+        customer = upserted[0];
+      } else if (tokenEmail) {
+        const { rows: existing } = await db.query<CustomerUser>(
+          'SELECT id, mobile, name, email FROM customers WHERE lower(email) = lower($1) LIMIT 1',
+          [tokenEmail],
+        );
+        if (existing[0]) {
+          const { rows: updated } = await db.query<CustomerUser>(
+            `UPDATE customers SET
+               name = COALESCE(NULLIF($2, ''), name),
+               last_login_at = now()
+             WHERE id = $1
+             RETURNING id, mobile, name, email`,
+            [existing[0].id, name ?? tokenName],
+          );
+          customer = updated[0];
+        } else {
+          const { rows: inserted } = await db.query<CustomerUser>(
+            `INSERT INTO customers (mobile, name, email, last_login_at)
+             VALUES (NULL, $1, $2, now())
+             RETURNING id, mobile, name, email`,
+            [name ?? tokenName, tokenEmail],
+          );
+          customer = inserted[0];
+        }
+      } else {
+        return reply.code(401).send({ error: 'Verified email or phone number missing from Firebase token' });
+      }
+
       const token = signCustomerToken(customer.id, customer.mobile);
       return { token, customer };
     },

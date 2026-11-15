@@ -1,5 +1,5 @@
 import { getApps, initializeApp } from 'firebase/app'
-import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth'
+import { getAuth, GoogleAuthProvider, RecaptchaVerifier, signInWithPhoneNumber, signInWithPopup, type ConfirmationResult } from 'firebase/auth'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSiteSettings } from '../settings'
 import { SplitWords } from '../SplitWords'
@@ -21,7 +21,7 @@ function normalizeIndianE164(raw: string): string | null {
 
 interface Customer {
   id: number
-  mobile: string
+  mobile: string | null
   name: string | null
   email: string | null
 }
@@ -270,6 +270,38 @@ export default function Booking() {
     }
   }
 
+  async function signInWithGoogle() {
+    if (!firebaseCfg) return
+    setAuthBusy(true)
+    setAuthError('')
+    try {
+      const app = getApps()[0] ?? initializeApp(firebaseCfg)
+      const auth = getAuth(app)
+      const cred = await signInWithPopup(auth, new GoogleAuthProvider())
+      const idToken = await cred.user.getIdToken()
+      const res = await fetch('/api/customer/auth/firebase-verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setAuthError(data.error || 'Google sign-in failed')
+        return
+      }
+      localStorage.setItem(CUSTOMER_TOKEN_KEY, data.token)
+      setToken(data.token)
+      setCustomer(data.customer)
+      if (data.customer?.name && !name) setName(data.customer.name)
+      if (data.customer?.email && !email) setEmail(data.customer.email)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : ''
+      setAuthError(msg || 'Google sign-in was cancelled or failed.')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
   function logoutCustomer() {
     localStorage.removeItem(CUSTOMER_TOKEN_KEY)
     setToken(null)
@@ -294,7 +326,15 @@ export default function Booking() {
       const bRes = await fetch('/api/customer/bookings', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ packageId: pkgId, date, time, name: name.trim(), email: email.trim() || undefined, notes: notes.trim() || undefined }),
+        body: JSON.stringify({
+          packageId: pkgId,
+          date,
+          time,
+          name: name.trim(),
+          phone: customer?.mobile ? undefined : mobile.trim(),
+          email: email.trim() || undefined,
+          notes: notes.trim() || undefined,
+        }),
       })
       const bData = await bRes.json().catch(() => ({}))
       if (!bRes.ok) {
@@ -442,9 +482,16 @@ export default function Booking() {
                       </span>
                     </label>
                     {authError && <p className="text-sm text-red">{authError}</p>}
-                    <button type="submit" disabled={authBusy} className="btn-hazard">
-                      {authBusy ? 'Sending OTP…' : 'Send OTP'}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button type="submit" disabled={authBusy} className="btn-hazard">
+                        {authBusy ? 'Sending OTP…' : 'Send OTP'}
+                      </button>
+                      {firebaseCfg && (
+                        <button type="button" disabled={authBusy} onClick={signInWithGoogle} className="btn-ghost">
+                          Continue with Google
+                        </button>
+                      )}
+                    </div>
                   </form>
                 ) : (
                   <form onSubmit={verifyOtp} className="mt-6 space-y-4">
@@ -539,7 +586,9 @@ export default function Booking() {
               <form onSubmit={createBookingAndOrder} noValidate className="plate grid gap-5 p-6 sm:grid-cols-2 sm:p-8">
                 <div className="sm:col-span-2 flex items-center justify-between border-b border-white/10 pb-3">
                   <div>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-lime">Verified: {customer.mobile}</p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-lime">
+                      Verified: {customer.mobile || customer.email}
+                    </p>
                     <p className="font-display text-xl uppercase text-bone">Step 2 // Select Package &amp; Slot</p>
                   </div>
                   <button type="button" onClick={logoutCustomer} className="font-mono text-xs uppercase text-smoke hover:text-bone">
@@ -577,6 +626,15 @@ export default function Booking() {
                     <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" className="field" required />
                   </span>
                 </label>
+
+                {!customer.mobile && (
+                  <label className="block sm:col-span-2">
+                    <span className="label">Mobile Number (+91) *</span>
+                    <span className="field-wrap mt-1.5">
+                      <input type="tel" value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="+91 98765 43210" className="field" required />
+                    </span>
+                  </label>
+                )}
 
                 <div className="sm:col-span-2">
                   <span className="label">Available Time Slots ({date}) *</span>

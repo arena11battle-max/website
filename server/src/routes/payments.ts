@@ -129,11 +129,14 @@ const routes: FastifyPluginAsync = async (app) => {
         time: z.enum(SLOTS),
         players: z.number().int().min(2).max(8).optional(),
         name: z.string().trim().min(2).max(80),
+        phone: z.string().trim().min(10).max(20).optional(),
         email: z.email().max(120).optional(),
         notes: z.string().trim().max(500).optional(),
       })
       .parse(req.body);
 
+    const phone = body.phone || req.customer!.mobile;
+    if (!phone) return reply.code(400).send({ error: 'Enter your mobile number (+91) for the booking' });
     if (body.date < todayIn(config.TIME_ZONE)) return reply.code(400).send({ error: 'Pick today or a future date' });
     const pkg = BOOKING_PACKAGES.find((p) => p.id === body.packageId)!;
     const players = body.players ?? pkg.players;
@@ -152,7 +155,7 @@ const routes: FastifyPluginAsync = async (app) => {
           reference,
           req.customer!.id,
           body.name,
-          req.customer!.mobile,
+          phone,
           body.email ?? req.customer!.email ?? null,
           players,
           body.date,
@@ -165,10 +168,11 @@ const routes: FastifyPluginAsync = async (app) => {
           slotKey,
         ],
       );
-      await db.query('UPDATE customers SET name = COALESCE($2, name), email = COALESCE($3, email) WHERE id = $1', [
+      await db.query('UPDATE customers SET name = COALESCE($2, name), email = COALESCE($3, email), mobile = COALESCE(mobile, $4) WHERE id = $1', [
         req.customer!.id,
         body.name,
         body.email ?? null,
+        phone,
       ]);
       return reply.code(201).send({ booking: rows[0] });
     } catch (err) {
