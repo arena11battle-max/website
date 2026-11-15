@@ -1,6 +1,6 @@
 import { getApps, initializeApp } from 'firebase/app'
-import { getAuth, GoogleAuthProvider, RecaptchaVerifier, signInWithPhoneNumber, signInWithPopup, type ConfirmationResult } from 'firebase/auth'
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { getAuth, getRedirectResult, GoogleAuthProvider, signInWithPopup, signInWithRedirect } from 'firebase/auth'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useSiteSettings } from '../settings'
 import { SplitWords } from '../SplitWords'
 
@@ -9,14 +9,6 @@ interface FirebaseWebConfig {
   authDomain: string
   projectId: string
   appId: string
-}
-
-function normalizeIndianE164(raw: string): string | null {
-  const digits = raw.replace(/[\s\-()]/g, '').replace(/^\+/, '')
-  if (/^[6-9]\d{9}$/.test(digits)) return `+91${digits}`
-  if (/^0[6-9]\d{9}$/.test(digits)) return `+91${digits.slice(1)}`
-  if (/^91[6-9]\d{9}$/.test(digits)) return `+91${digits.slice(2)}`
-  return null
 }
 
 interface Customer {
@@ -91,22 +83,39 @@ export default function Booking() {
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [myBookings, setMyBookings] = useState<CustomerBooking[]>([])
 
-  // OTP Login state
+  // Google Sign-In state
   const [firebaseCfg, setFirebaseCfg] = useState<FirebaseWebConfig | null>(null)
-  const confirmationRef = useRef<ConfirmationResult | null>(null)
-  const recaptchaRef = useRef<RecaptchaVerifier | null>(null)
   const [mobile, setMobile] = useState('')
-  const [otpSent, setOtpSent] = useState(false)
-  const [otp, setOtp] = useState('')
-  const [devOtpHint, setDevOtpHint] = useState<string | null>(null)
-  const [cooldown, setCooldown] = useState(0)
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
 
   useEffect(() => {
     fetch('/api/customer/auth/config')
       .then((r) => (r.ok ? r.json() : { firebase: null }))
-      .then((d) => setFirebaseCfg(d.firebase ?? null))
+      .then(async (d) => {
+        const cfg = d.firebase ?? null
+        setFirebaseCfg(cfg)
+        if (!cfg) return
+        const app = getApps()[0] ?? initializeApp(cfg)
+        const auth = getAuth(app)
+        const res = await getRedirectResult(auth).catch(() => null)
+        if (res?.user) {
+          const idToken = await res.user.getIdToken()
+          const vRes = await fetch('/api/customer/auth/firebase-verify', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ idToken }),
+          })
+          const vData = await vRes.json().catch(() => ({}))
+          if (vRes.ok && vData.token) {
+            localStorage.setItem(CUSTOMER_TOKEN_KEY, vData.token)
+            setToken(vData.token)
+            setCustomer(vData.customer)
+            if (vData.customer?.name) setName((prev) => prev || vData.customer.name)
+            if (vData.customer?.email) setEmail((prev) => prev || vData.customer.email)
+          }
+        }
+      })
       .catch(() => {})
   }, [])
 
@@ -175,109 +184,18 @@ export default function Booking() {
     loadSlots(date)
   }, [date, loadSlots])
 
-  useEffect(() => {
-    if (cooldown <= 0) return
-    const id = setTimeout(() => setCooldown((c) => Math.max(0, c - 1)), 1000)
-    return () => clearTimeout(id)
-  }, [cooldown])
-
-  async function sendOtp(e?: FormEvent) {
-    e?.preventDefault()
-    setAuthBusy(true)
-    setAuthError('')
-    try {
-      if (firebaseCfg) {
-        const e164 = normalizeIndianE164(mobile)
-        if (!e164) {
-          setAuthError('Enter a valid 10-digit Indian mobile number (+91)')
-          return
-        }
-        const app = getApps()[0] ?? initializeApp(firebaseCfg)
-        const auth = getAuth(app)
-        if (!recaptchaRef.current) {
-          recaptchaRef.current = new RecaptchaVerifier(auth, 'firebase-recaptcha-container', { size: 'invisible' })
-        }
-        const result = await signInWithPhoneNumber(auth, e164, recaptchaRef.current)
-        confirmationRef.current = result
-        setOtpSent(true)
-        setCooldown(30)
-        setDevOtpHint(null)
-        return
-      }
-      const res = await fetch('/api/customer/auth/send-otp', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mobile }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setAuthError(data.error || 'Could not send OTP')
-        if (data.retryAfterSeconds) setCooldown(data.retryAfterSeconds)
-        return
-      }
-      setOtpSent(true)
-      setCooldown(data.cooldownSeconds ?? 30)
-      setDevOtpHint(data.devOtp ?? null)
-    } catch (err) {
-      if (recaptchaRef.current) {
-        recaptchaRef.current.clear()
-        recaptchaRef.current = null
-      }
-      const msg = err instanceof Error ? err.message : ''
-      setAuthError(msg || 'Could not send OTP. Please try again.')
-    } finally {
-      setAuthBusy(false)
-    }
-  }
-
-  async function verifyOtp(e: FormEvent) {
-    e.preventDefault()
-    setAuthBusy(true)
-    setAuthError('')
-    try {
-      let res: Response
-      if (firebaseCfg && confirmationRef.current) {
-        const cred = await confirmationRef.current.confirm(otp)
-        const idToken = await cred.user.getIdToken()
-        res = await fetch('/api/customer/auth/firebase-verify', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ idToken }),
-        })
-      } else {
-        res = await fetch('/api/customer/auth/verify-otp', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ mobile, otp }),
-        })
-      }
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setAuthError(data.error || 'OTP verification failed')
-        return
-      }
-      localStorage.setItem(CUSTOMER_TOKEN_KEY, data.token)
-      setToken(data.token)
-      setCustomer(data.customer)
-      setOtp('')
-      setOtpSent(false)
-      setDevOtpHint(null)
-      confirmationRef.current = null
-    } catch {
-      setAuthError('Invalid or expired OTP. Please try again.')
-    } finally {
-      setAuthBusy(false)
-    }
-  }
-
   async function signInWithGoogle() {
-    if (!firebaseCfg) return
+    if (!firebaseCfg) {
+      setAuthError('Google Sign-In is not configured yet.')
+      return
+    }
     setAuthBusy(true)
     setAuthError('')
     try {
       const app = getApps()[0] ?? initializeApp(firebaseCfg)
       const auth = getAuth(app)
-      const cred = await signInWithPopup(auth, new GoogleAuthProvider())
+      const provider = new GoogleAuthProvider()
+      const cred = await signInWithPopup(auth, provider)
       const idToken = await cred.user.getIdToken()
       const res = await fetch('/api/customer/auth/firebase-verify', {
         method: 'POST',
@@ -295,6 +213,12 @@ export default function Booking() {
       if (data.customer?.name && !name) setName(data.customer.name)
       if (data.customer?.email && !email) setEmail(data.customer.email)
     } catch (err) {
+      const code = (err as { code?: string })?.code ?? ''
+      if (code === 'auth/popup-blocked') {
+        const app = getApps()[0] ?? initializeApp(firebaseCfg)
+        await signInWithRedirect(getAuth(app), new GoogleAuthProvider())
+        return
+      }
       const msg = err instanceof Error ? err.message : ''
       setAuthError(msg || 'Google sign-in was cancelled or failed.')
     } finally {
@@ -424,7 +348,7 @@ export default function Booking() {
             <p className="kicker">Online Booking &amp; Payment</p>
             <SplitWords as="h2" className="headline mt-4 text-bone" parts={[{ t: 'Book your' }, { t: 'mission', className: 'text-hazard' }]} />
             <p className="mt-5 max-w-md text-lg text-bone/75">
-              Sign in with your Indian mobile number (+91 OTP), pick an available slot, and pay online via UPI, Card, or Netbanking.
+              Sign in with your Google account, pick an available slot, and pay online via UPI, Card, or Netbanking.
             </p>
             {s.hours && (
               <p className="mt-6 font-mono text-xs uppercase tracking-[0.2em] text-smoke">
@@ -462,73 +386,17 @@ export default function Booking() {
           <div>
             {!customer ? (
               <div className="plate p-6 sm:p-8">
-                <p className="font-mono text-xs uppercase tracking-[0.25em] text-hazard">Step 1 // Mobile OTP Login</p>
-                <h3 className="mt-2 font-display text-2xl uppercase text-bone">Verify Your Mobile Number</h3>
-                <div id="firebase-recaptcha-container" />
-
-                {!otpSent ? (
-                  <form onSubmit={sendOtp} className="mt-6 space-y-4">
-                    <label className="block">
-                      <span className="label">Indian Mobile Number (+91)</span>
-                      <span className="field-wrap mt-1.5">
-                        <input
-                          type="tel"
-                          required
-                          value={mobile}
-                          onChange={(e) => setMobile(e.target.value)}
-                          placeholder="+91 98765 43210"
-                          className="field"
-                        />
-                      </span>
-                    </label>
-                    {authError && <p className="text-sm text-red">{authError}</p>}
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button type="submit" disabled={authBusy} className="btn-hazard">
-                        {authBusy ? 'Sending OTP…' : 'Send OTP'}
-                      </button>
-                      {firebaseCfg && (
-                        <button type="button" disabled={authBusy} onClick={signInWithGoogle} className="btn-ghost">
-                          Continue with Google
-                        </button>
-                      )}
-                    </div>
-                  </form>
-                ) : (
-                  <form onSubmit={verifyOtp} className="mt-6 space-y-4">
-                    <p className="text-sm text-smoke">
-                      Enter the 6-digit OTP sent to <span className="font-mono text-bone">{mobile}</span>.
-                    </p>
-                    {devOtpHint && (
-                      <p className="border border-amber/40 bg-amber/10 px-3 py-2 font-mono text-xs text-amber">
-                        Dev/Test OTP: <strong>{devOtpHint}</strong>
-                      </p>
-                    )}
-                    <label className="block">
-                      <span className="label">6-Digit OTP</span>
-                      <span className="field-wrap mt-1.5">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={6}
-                          required
-                          value={otp}
-                          onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-                          placeholder="123456"
-                          className="field font-mono tracking-[0.3em]"
-                        />
-                      </span>
-                    </label>
-                    {authError && <p className="text-sm text-red">{authError}</p>}
-                    <div className="flex flex-wrap gap-3">
-                      <button type="submit" disabled={authBusy} className="btn-hazard">
-                        {authBusy ? 'Verifying…' : 'Verify & Continue'}
-                      </button>
-                      <button type="button" disabled={cooldown > 0 || authBusy} onClick={() => sendOtp()} className="btn-ghost text-xs">
-                        {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend OTP'}
-                      </button>
-                    </div>
-                  </form>
-                )}
+                <p className="font-mono text-xs uppercase tracking-[0.25em] text-hazard">Step 1 // Customer Sign In</p>
+                <h3 className="mt-2 font-display text-2xl uppercase text-bone">Sign In With Google</h3>
+                <p className="mt-3 text-sm text-smoke">
+                  Use your Google account to book your slot, pay online, and access your receipts.
+                </p>
+                {authError && <p className="mt-4 text-sm text-red">{authError}</p>}
+                <div className="mt-6">
+                  <button type="button" disabled={authBusy || !firebaseCfg} onClick={signInWithGoogle} className="btn-hazard">
+                    {authBusy ? 'Signing in…' : 'Continue with Google'}
+                  </button>
+                </div>
               </div>
             ) : receipt ? (
               <div className="plate p-6 sm:p-8" role="status">

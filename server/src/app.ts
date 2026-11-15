@@ -94,6 +94,8 @@ export async function buildApp(db: Db, opts: { logger?: boolean } = {}) {
         upgradeInsecureRequests: null,
       },
     },
+    // Allow Firebase Google Sign-In popup to communicate back to the opener window.
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
     // The app is often reached over plain http on the venue LAN.
     strictTransportSecurity: config.COOKIE_SECURE,
   });
