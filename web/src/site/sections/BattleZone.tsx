@@ -8,7 +8,7 @@ const BattleZoneStage = lazy(() => import('./BattleZoneStage'))
 const CHAPTERS = [
   { k: '01 // The field', h: 'Real arena.', s: 'Towers, sandbags, pallets and barrels. Red base on one side, blue on the other.' },
   { k: '02 // The arsenal', h: 'Four blasters.', s: 'AR15 and Tactical M4 rifles, Vector and UMP45 SMGs. Gel blasters, not firearms.' },
-  { k: '03 // The kit', h: 'Gear up.', s: 'Helmet, hit-tracking vest and neck scarf for every player, checked by a marshal.' },
+  { k: '03 // The kit', h: 'Gear up.', s: 'Helmet and hit-tracking vest for every player, checked by a marshal.' },
 ]
 const GUN_IMAGES = ['/media/gun-rifle.webp', '/media/gun-m4-tactical.webp', '/media/gun-smg.webp', '/media/gun-ump.webp']
 

@@ -25,13 +25,6 @@ const GEAR: { id: GearId; code: string; name: string; blurb: string; points: str
     blurb: 'A hard shell with a full brim and a padded chin strap. Fitted with its own hit sensors.',
     points: ['Hard shell with brim all round', 'Adjustable padded chin strap', 'Fabric cover with velcro panels and ARENA11 patch', 'Side rails and a decorative front mount'],
   },
-  {
-    id: 'scarf',
-    code: 'KIT-03',
-    name: 'Neck scarf',
-    blurb: 'A cloth scarf that covers the neck and throat, the spots a vest and helmet leave open.',
-    points: ['Covers the neck and throat', 'Worn under the vest and helmet'],
-  },
 ]
 
 const RULES = [
@@ -71,7 +64,7 @@ export default function Safety() {
             <SplitWords as="h2" id="safety-title" className="headline mt-4 text-bone" parts={['Gear up.', { t: 'Stay safe.', className: 'text-hazard' }]} />
           </div>
           <p className="reveal max-w-md text-smoke">
-            Every player is issued the full kit before the gate opens. Drag the model to turn it, or switch between the vest, helmet and scarf.
+            Every player is issued the full kit before the gate opens. Drag the model to turn it, or switch between the vest and helmet.
           </p>
         </div>
 
