@@ -183,7 +183,7 @@ const routes: FastifyPluginAsync = async (app) => {
         `Email: ${body.email ?? req.customer!.email ?? 'N/A'}`,
         `Notes: ${body.notes ?? 'None'}`,
         `Manage: /command/bookings`,
-      ]).catch((err) => req.log.warn({ err }, 'booking email alert failed'));
+      ]).catch((err) => req.log.warn({ err }, `booking email alert failed: ${(err as Error).message}`));
       return reply.code(201).send({ booking: rows[0] });
     } catch (err) {
       const e = err as { code?: string };

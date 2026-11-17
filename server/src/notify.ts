@@ -4,7 +4,7 @@ let transporter: Transporter | null = null;
 
 function getTransporter(): { mailer: Transporter; from: string; to: string } | null {
   const user = process.env.SMTP_USER?.trim();
-  const pass = process.env.SMTP_PASS?.trim();
+  const pass = process.env.SMTP_PASS?.replace(/\s+/g, '');
   if (!user || !pass) return null;
 
   if (!transporter) {
@@ -15,6 +15,8 @@ function getTransporter(): { mailer: Transporter; from: string; to: string } | n
       port,
       secure: port === 465,
       auth: { user, pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
     });
   }
   const to = process.env.ALERT_EMAIL?.trim() || user;

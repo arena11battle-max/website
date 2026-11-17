@@ -136,8 +136,8 @@ const routes: FastifyPluginAsync = async (app) => {
                 to_char(b.preferred_time, 'HH24:MI') AS time, b.notes, b.game_mode AS mode, b.loadout, b.status, b.staff_notes AS "staffNotes",
                 s.name AS "handledBy", b.created_at AS "createdAt", b.updated_at AS "updatedAt"
            FROM bookings b LEFT JOIN staff_users s ON s.id = b.handled_by
-          WHERE ($1::text IS NULL OR b.status = $1)
-          ORDER BY (b.status = 'new') DESC, b.preferred_date, b.id DESC
+          WHERE ($1::text IS NULL OR ($1 = 'new' AND b.status IN ('new', 'pending')) OR b.status = $1)
+          ORDER BY (b.status IN ('new', 'pending')) DESC, b.preferred_date, b.id DESC
           LIMIT 300`,
         [q.status ?? null],
       );

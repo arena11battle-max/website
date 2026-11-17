@@ -4,7 +4,7 @@ import { get, patch } from '../lib/api'
 
 // Booking enquiries from the website. An enquiry becomes a booking only when staff confirm it with the customer.
 
-type Status = 'new' | 'contacted' | 'confirmed' | 'declined' | 'cancelled'
+type Status = 'new' | 'pending' | 'payment_successful' | 'contacted' | 'confirmed' | 'declined' | 'cancelled'
 
 interface Booking {
   id: number
@@ -28,6 +28,8 @@ const MODE_NAMES: Record<string, string> = { tdm: 'Team Deathmatch', domination:
 
 const STATUS: { id: Status; label: string; cls: string }[] = [
   { id: 'new', label: 'New', cls: 'text-amber border-amber' },
+  { id: 'pending', label: 'Pending QR', cls: 'text-amber border-amber' },
+  { id: 'payment_successful', label: 'Paid', cls: 'text-lime border-lime' },
   { id: 'contacted', label: 'Contacted', cls: 'text-blue border-blue' },
   { id: 'confirmed', label: 'Confirmed', cls: 'text-lime border-lime' },
   { id: 'declined', label: 'Declined', cls: 'text-muted border-line-2' },
@@ -37,7 +39,7 @@ const STATUS: { id: Status; label: string; cls: string }[] = [
 function BookingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
   const [notes, setNotes] = useState(b.staffNotes ?? '')
   const [error, setError] = useState<string | null>(null)
-  const st = STATUS.find((s) => s.id === b.status)!
+  const st = STATUS.find((s) => s.id === b.status) ?? STATUS[0]
   const set = async (status: Status) => {
     if ((status === 'declined' || status === 'cancelled') && !confirm(`Mark ${b.reference} as ${status}?`)) return
     setError(null)
@@ -90,7 +92,7 @@ function BookingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
       </label>
       <ErrorText error={error} />
       <div className="mt-3 flex flex-wrap gap-2">
-        {b.status !== 'contacted' && b.status === 'new' && (
+        {b.status !== 'contacted' && (b.status === 'new' || b.status === 'pending') && (
           <Button size="sm" onClick={() => set('contacted')}>
             Mark contacted
           </Button>
@@ -137,16 +139,19 @@ export default function Bookings() {
     <div>
       <PageHeader title="Bookings" sub="Enquiries from the website. Call the customer, then confirm or decline." />
       <div className="mb-4 flex gap-1 overflow-x-auto border-b border-line">
-        {[{ id: 'all' as const, label: 'All' }, ...STATUS].map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setFilter(s.id)}
-            className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-bold uppercase tracking-wider ${filter === s.id ? 'border-amber text-amber' : 'border-transparent text-muted hover:text-text'}`}
-          >
-            {s.label}
-            {s.id !== 'all' && data?.counts[s.id] ? <span className="ml-1.5 text-xs text-dim">{data.counts[s.id]}</span> : null}
-          </button>
-        ))}
+        {[{ id: 'all' as const, label: 'All' }, ...STATUS.filter((s) => s.id !== 'pending' && s.id !== 'payment_successful')].map((s) => {
+          const count = s.id === 'new' ? (data?.counts.new ?? 0) + (data?.counts.pending ?? 0) : s.id !== 'all' ? (data?.counts[s.id] ?? 0) : 0
+          return (
+            <button
+              key={s.id}
+              onClick={() => setFilter(s.id)}
+              className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-bold uppercase tracking-wider ${filter === s.id ? 'border-amber text-amber' : 'border-transparent text-muted hover:text-text'}`}
+            >
+              {s.label}
+              {s.id !== 'all' && count > 0 ? <span className="ml-1.5 text-xs text-dim">{count}</span> : null}
+            </button>
+          )
+        })}
       </div>
       <ErrorText error={error} />
       <Panel>
