@@ -350,14 +350,14 @@ export default function Booking() {
                   <span className="font-mono text-xs text-smoke">{qrStep.reference}</span>
                 </div>
 
-                <div className="grid gap-6 sm:grid-cols-[220px_1fr] sm:items-center">
-                  <div className="flex aspect-square w-full max-w-[220px] items-center justify-center border border-white/15 bg-white p-2">
+                <div className="grid gap-6 sm:grid-cols-[240px_1fr] sm:items-center">
+                  <div className="flex w-full max-w-[240px] items-center justify-center overflow-hidden border border-white/15 bg-black p-1">
                     {!qrMissing ? (
                       <img
-                        src="/media/payment-qr.png"
-                        alt="ARENA11 UPI Payment QR Code"
+                        src="/media/payment-qr.jpg"
+                        alt="ARENA11 PhonePe UPI Payment QR Code"
                         onError={() => setQrMissing(true)}
-                        className="h-full w-full object-contain"
+                        className="h-auto w-full object-contain"
                       />
                     ) : (
                       <div className="p-3 text-center font-mono text-xs text-black/75">
