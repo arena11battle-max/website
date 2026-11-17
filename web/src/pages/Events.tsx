@@ -138,8 +138,8 @@ export default function Events() {
   return (
     <div>
       <PageHeader
-        title="ALOHA 2026 // SRMAP"
-        sub="1 vs 1 Event Registrations (₹400 base fee)"
+        title="Coupons"
+        sub="Manage promo coupons & event registrations"
         action={
           <Button variant="primary" size="sm" onClick={downloadAllPdf} disabled={downloadingAll}>
             {downloadingAll ? 'Generating PDF…' : 'Download All PDF'}
@@ -222,7 +222,7 @@ export default function Events() {
                   label="Coupon Code"
                   value={code}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  placeholder="ALOHA100"
+                  placeholder="ARENA100"
                   required
                 />
                 <div className="grid grid-cols-2 gap-3">

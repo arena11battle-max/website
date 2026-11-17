@@ -39,7 +39,7 @@ export default function Layout() {
     { to: '/command/players', label: 'Players', d: icon.players },
     { to: '/command/matches/new', label: 'New match', d: icon.plus },
     { to: '/command/bookings', label: 'Bookings', d: icon.calendar },
-    { to: '/command/events', label: 'ALOHA 2026', d: icon.ticket },
+    { to: '/command/coupons', label: 'Coupons', d: icon.ticket },
     { to: '/command/history', label: 'History', d: icon.history },
     { to: '/command/leaderboard', label: 'Leaders', d: icon.trophy },
     { to: '/command/settings', label: 'Settings', d: icon.settings },

@@ -28,6 +28,7 @@ function Console() {
         <Route path="matches/:id" element={<MatchPage />} />
         <Route path="matches/:id/edit" element={<NewMatch />} />
         <Route path="bookings" element={<Bookings />} />
+        <Route path="coupons" element={<Events />} />
         <Route path="events" element={<Events />} />
         <Route path="history" element={<History />} />
         <Route path="leaderboard" element={<Leaderboard />} />

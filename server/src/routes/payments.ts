@@ -217,7 +217,12 @@ const routes: FastifyPluginAsync = async (app) => {
         headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
         body: JSON.stringify({ amount: amountPaise, currency: 'INR', receipt: receiptNo }),
       });
-      if (!r.ok) return reply.code(502).send({ error: 'Payment gateway unavailable' });
+      if (!r.ok) {
+        const errText = await r.text().catch(() => '');
+        req.log.error({ status: r.status, body: errText }, 'razorpay create-order failed');
+        if (r.status === 401) return reply.code(502).send({ error: 'Razorpay authentication failed — check RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET' });
+        return reply.code(502).send({ error: 'Payment gateway unavailable' });
+      }
       const data = (await r.json()) as { id: string };
       orderId = data.id;
       mode = 'live';
