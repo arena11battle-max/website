@@ -95,8 +95,8 @@ const MODES: Mode[] = [
 
 const STATUS = {
   live: { label: 'Live scoring', className: 'border-bone/40 text-bone' },
-  request: { label: 'Set up on request', className: 'border-hazard/60 text-hazard' },
-  preview: { label: 'Marshal-run · scoring in development', className: 'border-amber/50 text-amber' },
+  request: { label: 'Launching soon', className: 'border-amber/50 text-amber' },
+  preview: { label: 'Launching soon', className: 'border-amber/50 text-amber' },
 }
 
 function ModeCard({ m, i, onBrief }: { m: Mode; i: number; onBrief: () => void }) {
@@ -166,9 +166,15 @@ function ModeCard({ m, i, onBrief }: { m: Mode; i: number; onBrief: () => void }
           </div>
         </dl>
         <div className="mt-5 flex gap-2">
-          <button type="button" className="btn-hazard flex-1 !px-4 !py-3 text-xs" onClick={() => requestBooking({ mode: m.id })}>
-            {m.status === 'live' ? 'Book this mode' : 'Request this mode'}
-          </button>
+          {m.status === 'live' ? (
+            <button type="button" className="btn-hazard flex-1 !px-4 !py-3 text-xs" onClick={() => requestBooking({ mode: m.id })}>
+              Book this mode
+            </button>
+          ) : (
+            <button type="button" disabled className="btn-ghost flex-1 cursor-not-allowed !px-4 !py-3 text-xs opacity-60">
+              Launching soon
+            </button>
+          )}
           <button type="button" className="btn-ghost !px-4 !py-3 text-xs" onClick={onBrief}>
             Briefing
           </button>
