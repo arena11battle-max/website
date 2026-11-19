@@ -45,7 +45,7 @@ interface CustomerBooking {
 }
 
 const PACKAGES: PackageOption[] = [
-  { id: '1v1', name: '1 vs 1 TDM Duel', players: 2, amountInr: 300, duration: '30–40 min', available: true },
+  { id: '1v1', name: '1 vs 1 TDM Duel', players: 2, amountInr: 400, duration: '30–40 min', available: true },
   { id: '2v2', name: '2 vs 2 TDM Squad', players: 4, amountInr: 500, duration: '30–40 min', available: false },
 ]
 

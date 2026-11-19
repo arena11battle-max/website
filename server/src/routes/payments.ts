@@ -8,7 +8,7 @@ import { sendAdminBookingEmail } from '../notify.js';
 import { makeCustomerAuth } from './customerAuth.js';
 
 export const BOOKING_PACKAGES = [
-  { id: '1v1', name: '1 vs 1 TDM Duel (30–40 min)', players: 2, amountInr: 300, mode: 'tdm', available: true },
+  { id: '1v1', name: '1 vs 1 TDM Duel (30–40 min)', players: 2, amountInr: 400, mode: 'tdm', available: true },
   { id: '2v2', name: '2 vs 2 TDM Squad (30–40 min)', players: 4, amountInr: 500, mode: 'tdm', available: false },
 ] as const;
 
@@ -138,7 +138,7 @@ const routes: FastifyPluginAsync = async (app) => {
     if (!phone) return reply.code(400).send({ error: 'Enter your mobile number (+91) for the booking' });
     if (body.date < todayIn(config.TIME_ZONE)) return reply.code(400).send({ error: 'Pick today or a future date' });
     const pkg = BOOKING_PACKAGES.find((p) => p.id === body.packageId)!;
-    if (!pkg.available) return reply.code(400).send({ error: '2 vs 2 TDM is launching soon. Only 1 vs 1 TDM (₹300) is available right now.' });
+    if (!pkg.available) return reply.code(400).send({ error: '2 vs 2 TDM is launching soon. Only 1 vs 1 TDM (₹400) is available right now.' });
     const players = body.players ?? pkg.players;
     const reference = 'A11-' + crypto.randomBytes(3).toString('hex').toUpperCase();
     const slotKey = `${body.date}|${body.time}`;
